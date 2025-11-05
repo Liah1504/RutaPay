@@ -6,6 +6,7 @@ import Register from './pages/Register';
 import PassengerDashboard from './pages/PassengerDashboard';
 import DriverDashboard from './pages/DriverDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import SettingsPage from './pages/SettingsPage';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children, requiredRole }) => {
@@ -29,8 +30,12 @@ const ProtectedRoute = ({ children, requiredRole }) => {
     return <Navigate to="/login" replace />;
   }
   
-  if (requiredRole && user.role !== requiredRole) {
-    return <Navigate to="/" replace />;
+  // requiredRole puede ser string o array de strings
+  if (requiredRole) {
+    const allowed = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
+    if (!allowed.includes(user.role)) {
+      return <Navigate to="/" replace />;
+    }
   }
   
   return children;
@@ -89,6 +94,16 @@ function App() {
               } 
             />
             
+            {/* Página de Ajustes - accesible solo para conductor y pasajero (según tu petición) */}
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute requiredRole={['driver', 'passenger']}>
+                  <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Rutas públicas */}
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />

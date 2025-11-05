@@ -1,10 +1,12 @@
 const express = require('express');
-const { getMyProfile } = require('../controllers/userController');
+const { getProfile, updateProfile } = require('../controllers/userController');
 const { authenticateToken } = require('../middleware/auth');
+const multer = require('multer');
+const upload = multer(); // memoria
 
 const router = express.Router();
 
-// GET /api/users/profile - Ruta protegida para obtener el perfil del propio usuario
-router.get('/profile', authenticateToken, getMyProfile);
+router.get('/profile', authenticateToken, getProfile);
+router.put('/profile', authenticateToken, upload.single('avatar'), updateProfile);
 
 module.exports = router;

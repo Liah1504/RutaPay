@@ -3,6 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path'); // <-- añadido para servir archivos estáticos
 
 // Importar rutas
 const authRoutes = require('./routes/auth');
@@ -46,6 +47,9 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Servir archivos estáticos (avatars subidos a /backend/public/avatars)
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 console.log('🔍 Cargando rutas...');
 

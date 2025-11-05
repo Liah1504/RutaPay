@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Container, Paper, Typography, Button, Box, Card, CardContent, Grid, Alert, Chip, 
+  Container, Paper, Typography, Button, Box, Card, CardContent, Grid, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, CircularProgress, Divider,
-  // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
-  TableContainer, Table, TableHead, TableRow, TableCell, TableBody 
-  // --- FIN DE LA CORRECCIÓN ---
+  TableContainer, Table, TableHead, TableRow, TableCell, TableBody
 } from '@mui/material';
 import { Phone, LocationOn, PersonPinCircle } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
-// ¡Importamos la nueva paymentAPI!
-import { routeAPI, tripAPI, rechargeAPI, paymentAPI } from '../services/api'; 
+import { routeAPI, tripAPI, rechargeAPI, paymentAPI } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 
 const PassengerDashboard = () => {
   const { user, fetchAndUpdateUser } = useAuth();
+  const navigate = useNavigate();
+
   const [routes, setRoutes] = useState([]);
   const [trips, setTrips] = useState([]);
   const [loadingRoutes, setLoadingRoutes] = useState(true);
@@ -21,9 +21,9 @@ const PassengerDashboard = () => {
   const [message, setMessage] = useState('');
   const [selectedRoute, setSelectedRoute] = useState(null);
 
-  // --- ¡NUEVOS ESTADOS PARA EL PAGO! ---
+  // --- Pagos (modal) ---
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [driverCode, setDriverCode] = useState(''); // El código que tipea el pasajero
+  const [driverCode, setDriverCode] = useState(''); // Código del conductor que escribe el pasajero
   const [paymentError, setPaymentError] = useState('');
 
   // Estados para recarga
@@ -33,6 +33,9 @@ const PassengerDashboard = () => {
   const [rechargeRef, setRechargeRef] = useState('');
   const [rechargeMsg, setRechargeMsg] = useState({ text: '', type: 'info' });
 
+  // Filtro de historial por fecha (YYYY-MM-DD)
+  const [filterDate, setFilterDate] = useState('');
+
   // Cargar rutas
   const fetchRoutes = useCallback(async () => {
     setLoadingRoutes(true);
@@ -41,6 +44,7 @@ const PassengerDashboard = () => {
       if (response.data && response.data.length > 0) {
         setRoutes(response.data);
       } else {
+        setRoutes([]);
         setMessage('No hay rutas disponibles en este momento.');
       }
     } catch (error) {
@@ -51,21 +55,22 @@ const PassengerDashboard = () => {
     }
   }, []);
 
-  // Cargar historial de viajes
+  // Cargar historial de viajes del pasajero
   const fetchPassengerTrips = useCallback(async () => {
     try {
       const response = await tripAPI.getPassengerTrips();
-      setTrips(response.data);
+      setTrips(response.data || []);
     } catch (error) {
       console.error('Error fetching trips:', error);
+      // No mostrar alerta intrusiva aquí, solo log
     }
   }, []);
 
   useEffect(() => {
     fetchRoutes();
     fetchPassengerTrips();
-    
-    // Polling para el historial de pagos
+
+    // Polling para el historial de pagos (cada 10s)
     const interval = setInterval(() => {
       fetchPassengerTrips();
     }, 10000);
@@ -73,7 +78,9 @@ const PassengerDashboard = () => {
     return () => clearInterval(interval);
   }, [fetchRoutes, fetchPassengerTrips]);
 
-  // --- Lógica para el modal de recarga ---
+  // ==================================================================
+  // Recarga de saldo
+  // ==================================================================
   const handleSendRecharge = async () => {
     if (!rechargeAmount || !rechargeDate || !rechargeRef) {
       setRechargeMsg({ text: "Completa todos los campos.", type: 'error' });
@@ -88,13 +95,14 @@ const PassengerDashboard = () => {
         reference: rechargeRef,
       });
       setRechargeMsg({ text: 'Recarga enviada para verificación.', type: 'success' });
+
       setTimeout(() => {
         setShowRecharge(false);
         setRechargeAmount('');
         setRechargeDate('');
         setRechargeRef('');
         setRechargeMsg({ text: '', type: 'info' });
-      }, 3000);
+      }, 1500);
     } catch (err) {
       const errorMsg = err.response?.data?.error || 'Error enviando la recarga.';
       setRechargeMsg({ text: errorMsg, type: 'error' });
@@ -102,70 +110,73 @@ const PassengerDashboard = () => {
       setLoadingAction(false);
     }
   };
-  
+
   // ==================================================================
-  // ¡LÓGICA DE PAGO MODIFICADA!
+  // Pago — modal
   // ==================================================================
-  
-  // 1. Al hacer clic en la tarjeta de ruta, abrimos el modal de pago
   const handleOpenPaymentDialog = (route) => {
-    // Verificamos si tiene saldo ANTES de abrir el modal de pago
+    // Verificamos saldo antes de abrir el modal
     if (user && parseFloat(user.balance) < parseFloat(route.fare)) {
-        setMessage('Saldo insuficiente para pagar esta ruta. Por favor, recarga.');
-        setTimeout(() => setMessage(''), 4000);
-        return;
+      setMessage('Saldo insuficiente para pagar esta ruta. Por favor, recarga.');
+      setTimeout(() => setMessage(''), 3500);
+      return;
     }
     setSelectedRoute(route);
     setPaymentDialogOpen(true);
-    setPaymentError(''); 
-    setDriverCode(''); 
+    setPaymentError('');
+    setDriverCode('');
   };
-  
+
   const closePaymentDialog = () => {
     setPaymentDialogOpen(false);
     setSelectedRoute(null);
+    setPaymentError('');
+    setDriverCode('');
   };
 
-  // 2. Al confirmar el pago en el modal
   const handleExecutePayment = async () => {
     if (!selectedRoute || !driverCode) {
-        setPaymentError('Debes ingresar el código del conductor.');
-        return;
+      setPaymentError('Debes ingresar el código del conductor.');
+      return;
     }
-    
     setLoadingAction(true);
     setPaymentError('');
-    
     try {
-      // Usamos la nueva API de pago
       await paymentAPI.executePayment({
         route_id: selectedRoute.id,
         driver_code: driverCode
       });
-      
-      setMessage('¡Pago realizado exitosamente!');
-      
-      // Actualizamos el saldo e historial inmediatamente
-      await fetchPassengerTrips();
-      await fetchAndUpdateUser(); // Esto refresca el saldo en el header y en este dashboard
-      
-      closePaymentDialog();
 
+      setMessage('¡Pago realizado exitosamente!');
+      // refrescar historial y saldo
+      await fetchPassengerTrips();
+      try { await fetchAndUpdateUser(); } catch (e) { /* no crítico */ }
+
+      closePaymentDialog();
     } catch (error) {
       const errorMsg = error.response?.data?.error || 'Error al procesar el pago.';
-      setPaymentError(errorMsg); // Mostramos el error DENTRO del modal
+      setPaymentError(errorMsg);
+      console.error('Payment error:', error);
     } finally {
       setLoadingAction(false);
     }
   };
 
-  // --- Funciones de ayuda para estilos ---
+  // Filtrado local del historial por fecha YYYY-MM-DD
+  const filteredTrips = trips.filter(trip => {
+    if (!filterDate) return true;
+    const d = new Date(trip.created_at || trip.date);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.toISOString().slice(0, 10) === filterDate;
+  });
+
+  // Helpers de estado y formato
   const getStatusColor = (status) => ({
     pending: 'warning',
     in_progress: 'primary',
     completed: 'success',
   }[status] || 'default');
-  
+
   const getStatusText = (status) => ({
     pending: 'Pendiente',
     in_progress: 'En camino',
@@ -176,16 +187,19 @@ const PassengerDashboard = () => {
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <Header />
       <Container maxWidth="lg" sx={{ pt: 4, pb: 4 }}>
-        {message && <Alert severity="info" sx={{ mb: 2 }} onClose={() => setMessage('')}>{message}</Alert>}
-        
+        {message && (
+          <Alert severity="info" sx={{ mb: 2 }} onClose={() => setMessage('')}>
+            {message}
+          </Alert>
+        )}
+
         <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'text.primary' }}>
           Bienvenido, {user?.name || 'Pasajero'}
         </Typography>
 
         <Grid container spacing={3}>
-          {/* --- Columna Izquierda: Saldo e Información --- */}
+          {/* Columna izquierda: saldo e info */}
           <Grid item xs={12} md={4}>
-            {/* Tarjeta de Saldo */}
             <Paper sx={{ p: 3, mb: 3 }}>
               <Typography variant="h6" gutterBottom color="text.secondary">Saldo Disponible</Typography>
               <Box sx={{ display: 'flex', alignItems: 'center', my: 2 }}>
@@ -194,23 +208,22 @@ const PassengerDashboard = () => {
                 </Typography>
                 <Typography variant="h6" color="text.secondary" sx={{ ml: 1 }}>Bs</Typography>
               </Box>
-              <Button 
-                variant="contained" 
-                color="secondary" 
+              <Button
+                variant="contained"
+                color="secondary"
                 size="large"
-                fullWidth 
+                fullWidth
                 onClick={() => setShowRecharge(true)}
               >
                 Recargar Saldo
               </Button>
             </Paper>
 
-            {/* Tarjeta de Información de la Asociación */}
             <Paper sx={{ p: 3 }}>
               <Typography variant="h6" gutterBottom color="primary">
                 Asociación Civil Propatria 23 de Enero, Silencio
               </Typography>
-              
+
               <Box sx={{ display: 'flex', alignItems: 'center', mt: 2, mb: 2 }}>
                 <LocationOn color="action" />
                 <Box sx={{ ml: 2 }}>
@@ -232,13 +245,15 @@ const PassengerDashboard = () => {
             </Paper>
           </Grid>
 
-          {/* --- Columna Derecha: Rutas e Historial --- */}
+          {/* Columna derecha: rutas y historial */}
           <Grid item xs={12} md={8}>
-            {/* Tarjetas de Rutas para Pagar */}
             <Paper sx={{ p: 3, mb: 3 }}>
               <Typography variant="h5" gutterBottom>🚗 Pagar Viaje</Typography>
+
               {loadingRoutes ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}><CircularProgress /></Box>
+                <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
+                  <CircularProgress />
+                </Box>
               ) : routes.length > 0 ? (
                 <Grid container spacing={2}>
                   {routes.map((route) => (
@@ -247,11 +262,11 @@ const PassengerDashboard = () => {
                         <CardContent sx={{ flexGrow: 1 }}>
                           <Typography variant="h6" gutterBottom>{route.name}</Typography>
                           <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center' }}>
-                            <PersonPinCircle sx={{ fontSize: '1rem', mr: 1 }} color="success" /> 
+                            <PersonPinCircle sx={{ fontSize: '1rem', mr: 1 }} color="success" />
                             <strong>Desde:</strong> {route.start_point}
                           </Typography>
                           <Typography variant="body2" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                            <LocationOn sx={{ fontSize: '1rem', mr: 1 }} color="error" /> 
+                            <LocationOn sx={{ fontSize: '1rem', mr: 1 }} color="error" />
                             <strong>Hasta:</strong> {route.end_point}
                           </Typography>
                         </CardContent>
@@ -259,20 +274,20 @@ const PassengerDashboard = () => {
                           <Typography variant="h5" color="primary" sx={{ textAlign: 'center', mb: 2, fontWeight: 600 }}>
                             {parseFloat(route.fare).toFixed(2)} Bs
                           </Typography>
-                          
-                          <Button 
-                            variant="contained" 
+
+                          <Button
+                            variant="contained"
                             color="primary"
-                            fullWidth 
-                            size="large" 
-                            onClick={() => handleOpenPaymentDialog(route)} 
+                            fullWidth
+                            size="large"
+                            onClick={() => handleOpenPaymentDialog(route)}
                             disabled={loadingAction || (user && parseFloat(user.balance) < parseFloat(route.fare))}
                           >
                             Pagar Viaje
                           </Button>
-                          
+
                           {user && parseFloat(user.balance) < parseFloat(route.fare) && (
-                            <Typography variant="caption" color="error" display="block" align="center" sx={{mt: 1}}>
+                            <Typography variant="caption" color="error" display="block" align="center" sx={{ mt: 1 }}>
                               Saldo insuficiente
                             </Typography>
                           )}
@@ -286,9 +301,23 @@ const PassengerDashboard = () => {
               )}
             </Paper>
 
-            {/* Historial de Viajes (Pagos) */}
             <Paper sx={{ p: 3 }}>
-              <Typography variant="h5" gutterBottom>📋 Historial de Pagos</Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h5">📋 Historial de Pagos</Typography>
+
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                  <TextField
+                    type="date"
+                    value={filterDate}
+                    onChange={(e) => setFilterDate(e.target.value)}
+                    size="small"
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ minWidth: 180 }}
+                  />
+                  <Button variant="outlined" onClick={() => setFilterDate('')}>Borrar filtro</Button>
+                </Box>
+              </Box>
+
               {trips.length > 0 ? (
                 <TableContainer>
                   <Table size="small">
@@ -301,7 +330,7 @@ const PassengerDashboard = () => {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {trips.map((trip) => (
+                      {filteredTrips.map((trip) => (
                         <TableRow key={trip.id}>
                           <TableCell>{new Date(trip.created_at).toLocaleString()}</TableCell>
                           <TableCell>{trip.route_name}</TableCell>
@@ -323,16 +352,16 @@ const PassengerDashboard = () => {
           </Grid>
         </Grid>
 
-        {/* --- MODAL DE RECARGA DE SALDO --- */}
+        {/* MODAL DE RECARGA */}
         <Dialog open={showRecharge} onClose={() => setShowRecharge(false)}>
           <DialogTitle>Recargar Saldo - Pago Móvil</DialogTitle>
           <DialogContent>
             <Typography variant="body2" gutterBottom>
-              <b>Datos de Pago Móvil:</b><br/>
-              Banco: Banco de Venezuela<br/>
-              Cédula/RIF: V-12345678<br/>
-              Teléfono: 0414-1234567<br/>
-              <hr/>
+              <b>Datos de Pago Móvil:</b><br />
+              Banco: Banco de Venezuela<br />
+              Cédula/RIF: V-12345678<br />
+              Teléfono: 0414-1234567<br />
+              <hr />
             </Typography>
             <TextField label="Monto (Bs)" type="number" fullWidth margin="dense" value={rechargeAmount} onChange={e => setRechargeAmount(e.target.value)} />
             <TextField label="Fecha del Pago" type="date" fullWidth margin="dense" InputLabelProps={{ shrink: true }} value={rechargeDate} onChange={e => setRechargeDate(e.target.value)} />
@@ -347,7 +376,7 @@ const PassengerDashboard = () => {
           </DialogActions>
         </Dialog>
 
-        {/* --- ¡NUEVO! MODAL DE PAGO (REEMPLAZA AL DE "CONFIRMAR VIAJE") --- */}
+        {/* MODAL DE PAGO */}
         <Dialog open={paymentDialogOpen} onClose={closePaymentDialog} fullWidth maxWidth="xs">
           <DialogTitle>Realizar Pago</DialogTitle>
           <DialogContent>
@@ -355,14 +384,14 @@ const PassengerDashboard = () => {
               <>
                 <Typography variant="h6">{selectedRoute.name}</Typography>
                 <Typography>Monto a Pagar: <strong>{parseFloat(selectedRoute.fare).toFixed(2)} Bs</strong></Typography>
-                <Typography color="text.secondary" variant="body2" sx={{mb: 2}}>
+                <Typography color="text.secondary" variant="body2" sx={{ mb: 2 }}>
                   Saldo actual: {user?.balance ? parseFloat(user.balance).toFixed(2) : '0.00'} Bs
                 </Typography>
-                
-                <TextField 
-                  label="Código del Conductor" 
-                  fullWidth 
-                  margin="dense" 
+
+                <TextField
+                  label="Código del Conductor"
+                  fullWidth
+                  margin="dense"
                   value={driverCode}
                   onChange={e => setDriverCode(e.target.value)}
                   helperText="Ingresa el código que te muestra el conductor."
@@ -379,7 +408,7 @@ const PassengerDashboard = () => {
             </Button>
           </DialogActions>
         </Dialog>
-        
+
       </Container>
     </Box>
   );

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Container, Paper, Typography, Box, Grid, Table, 
-  TableBody, TableCell, TableContainer, TableHead, TableRow, Chip, 
+  Container, Paper, Typography, Box, Grid, Table,
+  TableBody, TableCell, TableContainer, TableHead, TableRow, Chip,
   Button, CircularProgress, Alert, Dialog, DialogTitle, DialogContent,
-  IconButton, Tooltip, Card, CardContent 
+  IconButton, Tooltip, Card, CardContent
 } from '@mui/material';
 import { Edit as EditIcon, Delete as DeleteIcon, Add as AddIcon, Close as CloseIcon, AttachMoney as AttachMoneyIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,9 +11,11 @@ import Header from '../components/Header';
 import { rechargeAPI, authAPI, routeAPI, adminAPI } from '../services/api'; 
 import UserForm from '../components/UserForm'; 
 import RouteForm from '../components/RouteForm'; 
+import { useNavigate } from 'react-router-dom';
 
 const AdminDashboard = () => {
-  const { user } = useAuth(); 
+  const { user, logout } = useAuth(); 
+  const navigate = useNavigate();
 
   // --- Estados de Estadísticas ---
   const [stats, setStats] = useState({ 
@@ -250,14 +252,38 @@ const AdminDashboard = () => {
     }
   };
 
+  // ==================================================================
+  // LOGOUT (botón para admin que redirige al inicio)
+  // ==================================================================
+  const handleLogout = async () => {
+    try {
+      if (typeof logout === 'function') {
+        await logout();
+      }
+    } catch (err) {
+      console.warn('Error during logout:', err);
+    } finally {
+      // Redirigir al inicio público
+      navigate('/');
+    }
+  };
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <Header />
       <Container maxWidth="xl" sx={{ pt: 4, pb: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'text.primary' }}>
-          👨‍💼 Panel de Administración
-        </Typography>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'text.primary' }}>
+            👨‍💼 Panel de Administración
+          </Typography>
+
+          {/* Botón de Cerrar Sesión (administrador) */}
+          <Box>
+            <Button variant="outlined" color="inherit" onClick={handleLogout}>
+              Cerrar sesión
+            </Button>
+          </Box>
+        </Box>
 
         {message.text && <Alert severity={message.type} sx={{ mb: 2 }} onClose={() => setMessage({ text: '', type: 'info' })}>{message.text}</Alert>}
 
