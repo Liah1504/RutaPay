@@ -7,12 +7,9 @@ import {
   Typography,
   Box,
   Alert,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem
+  Link
 } from '@mui/material';
-import { useAuth } from '../contexts/AuthContext';
+import { authAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 const Register = () => {
@@ -20,148 +17,138 @@ const Register = () => {
     name: '',
     email: '',
     password: '',
-    phone: '',
-    role: 'passenger'
+    phone: ''
   });
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  };
+
+  const validate = () => {
+    if (!formData.name.trim() || !formData.email.trim() || !formData.password) {
+      setError('Por favor completa nombre, correo y contraseña.');
+      return false;
+    }
+    // validación simple de email
+    const emailRegex = /\S+@\S+\.\S+/;
+    if (!emailRegex.test(formData.email)) {
+      setError('Ingresa un correo válido.');
+      return false;
+    }
+    if (formData.password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres.');
+      return false;
+    }
+    return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    if (!formData.name || !formData.email || !formData.password) {
-      setError('Por favor completa todos los campos obligatorios');
-      return;
-    }
+    setError('');
+    setSuccess('');
+    if (!validate()) return;
 
     setLoading(true);
-    setError('');
+    try {
+      // Llamamos al endpoint público de registro (crea SOLO pasajeros en backend)
+      await authAPI.register({
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        phone: formData.phone.trim()
+      });
 
-    const result = await register(formData);
-    
-    if (result.success) {
-      // Redirección por rol
-      const user = JSON.parse(localStorage.getItem('rutapay_user'));
-      switch (user.role) {
-        case 'admin':
-          navigate('/admin');
-          break;
-        case 'driver':
-          navigate('/driver');
-          break;
-        case 'passenger':
-          navigate('/passenger');
-          break;
-        default:
-          navigate('/');
-      }
-    } else {
-      setError(result.error);
+      setSuccess('Cuenta creada correctamente. Revisa tu correo si es necesario. Redirigiendo al login...');
+      setTimeout(() => navigate('/login'), 1500);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Error registrando usuario. Inténtalo de nuevo.');
+    } finally {
+      setLoading(false);
     }
-    
-    setLoading(false);
   };
 
   return (
-    // Contenedor que centra todo en la página
-    <Container component="main" maxWidth="xs" sx={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      py: 4, // Padding vertical para que no se corte en pantallas pequeñas
-    }}>
-      {/* La tarjeta (Paper) tomará los bordes redondeados del theme.js */}
-      <Paper elevation={6} sx={{
-        padding: 4,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        width: '100%',
-      }}>
-        {/* Usamos tu logo. Debe estar en /public/logo.png */}
-        <img src="/logo.png" alt="RutaPay Logo" style={{ height: '50px', marginBottom: '16px' }} />
-        
-        <Typography component="h1" variant="h5" gutterBottom>
-          Crear Cuenta
+    <Container maxWidth="sm" sx={{ mt: 8 }}>
+      <Paper elevation={8} sx={{ p: 4, borderRadius: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+          <img src="/logo.png" alt="RutaPay" style={{ height: 56 }} />
+        </Box>
+
+        <Typography variant="h5" align="center" gutterBottom sx={{ fontWeight: 700 }}>
+          Crear cuenta (Pasajero)
         </Typography>
-        
-        {error && <Alert severity="error" sx={{ mb: 2, width: '100%' }}>{error}</Alert>}
-        
-        <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1, width: '100%' }}>
+
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        {success && <Alert severity="success" sx={{ mb: 2 }}>{success}</Alert>}
+
+        <Box component="form" onSubmit={handleSubmit} noValidate>
           <TextField
-            margin="normal"
-            required
-            fullWidth
-            label="Nombre Completo"
+            label="Nombre completo"
             name="name"
             value={formData.name}
             onChange={handleChange}
-          />
-          <TextField
-            margin="normal"
-            required
             fullWidth
-            label="Correo Electrónico"
+            required
+            margin="normal"
+            autoComplete="name"
+          />
+
+          <TextField
+            label="Correo electrónico"
             name="email"
             type="email"
             value={formData.email}
             onChange={handleChange}
-          />
-          <TextField
-            margin="normal"
-            required
             fullWidth
+            required
+            margin="normal"
+            autoComplete="email"
+          />
+
+          <TextField
             label="Contraseña"
             name="password"
             type="password"
             value={formData.password}
             onChange={handleChange}
-          />
-          <TextField
-            margin="normal"
             fullWidth
-            label="Teléfono"
+            required
+            margin="normal"
+            autoComplete="new-password"
+            helperText="Al menos 6 caracteres"
+          />
+
+          <TextField
+            label="Teléfono (opcional)"
             name="phone"
             value={formData.phone}
             onChange={handleChange}
+            fullWidth
+            margin="normal"
+            autoComplete="tel"
           />
-          {/* Este es el formulario público, solo permite Pasajero o Conductor */}
-          <FormControl fullWidth margin="normal" required>
-            <InputLabel>Quiero registrarme como</InputLabel>
-            <Select
-              name="role"
-              value={formData.role}
-              label="Quiero registrarme como"
-              onChange={handleChange}
-            >
-              <MenuItem value="passenger">Pasajero</MenuItem>
-              <MenuItem value="driver">Conductor</MenuItem>
-            </Select>
-          </FormControl>
+
           <Button
             type="submit"
             fullWidth
             variant="contained"
-            color="primary" // Usará el color primario de tu tema
-            sx={{ mt: 3, mb: 2, py: 1.5 }} // Botón más grande
+            color="primary"
+            sx={{ mt: 3, py: 1.5 }}
             disabled={loading}
           >
             {loading ? 'Creando cuenta...' : 'Registrarse'}
           </Button>
-          <Button fullWidth variant="text" onClick={() => navigate('/login')}>
-            ¿Ya tienes cuenta? Inicia Sesión
-          </Button>
+
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+            <Typography variant="body2">
+              ¿Ya tienes cuenta?{' '}
+              <Link href="/login" underline="hover">Inicia sesión</Link>
+            </Typography>
+          </Box>
         </Box>
       </Paper>
     </Container>

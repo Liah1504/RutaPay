@@ -3,7 +3,6 @@ const {
   getAllRoutes, 
   getRouteById, 
   createRoute, 
-  // getPropatriaChacaitoRoute, // <-- Esta función ya no se importa
   updateRoute,
   deactivateRoute,
   getPopularRoutes
@@ -13,16 +12,13 @@ const { authenticateToken, authorize } = require('../middleware/auth');
 const router = express.Router();
 
 // GET /api/routes - Obtener todas las rutas
-router.get('/', getAllRoutes); // Esta ruta ahora usa la función corregida
+router.get('/', getAllRoutes);
 
 // GET /api/routes/popular - Rutas más populares
 router.get('/popular', getPopularRoutes);
 
 // GET /api/routes/:id - Obtener ruta por ID
 router.get('/:id', getRouteById);
-
-// --- ESTA RUTA SE ELIMINÓ PORQUE YA NO ES NECESARIA ---
-// router.get('/propatria-chacaito', getPropatriaChacaitoRoute);
 
 // POST /api/routes - Crear nueva ruta (solo admin)
 router.post('/', authenticateToken, authorize('admin'), createRoute);

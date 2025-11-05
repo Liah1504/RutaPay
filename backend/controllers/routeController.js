@@ -2,22 +2,16 @@ const db = require('../config/database');
 
 // Obtener todas las rutas
 const getAllRoutes = async (req, res) => {
-  // --- ¡NUEVO DEBUG! ---
-  console.log('--- [DEBUG V2] Ejecutando getAllRoutes desde el archivo LIMPIO ---'); 
-  
+  // DEBUG
+  console.log('--- [DEBUG] Ejecutando getAllRoutes ---');
   try {
     const routes = await db.query(`
       SELECT * FROM routes
       WHERE is_active = true
       ORDER BY name
     `);
-    
-    // --- ¡NUEVO DEBUG! ---
-    console.log(`[DEBUG V2] Consulta a la BD exitosa. Encontradas ${routes.rows.length} rutas.`);
-    
-    // Enviamos directamente las filas de la base de datos
+    console.log(`[DEBUG] Encontradas ${routes.rows.length} rutas.`);
     res.json(routes.rows);
-
   } catch (error) {
     console.error('❌ Error obteniendo todas las rutas:', error);
     res.status(500).json({ error: 'Error al obtener las rutas' });
@@ -131,4 +125,3 @@ module.exports = {
   deactivateRoute,
   getPopularRoutes
 };
-

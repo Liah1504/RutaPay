@@ -3,7 +3,9 @@ const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 
 const register = async (req, res) => {
-  const { email, password, name, phone, role } = req.body;
+  // REGISTRO PÚBLICO: SOLO CREAMOS PASAJEROS (role forced to 'passenger')
+  const { email, password, name, phone } = req.body;
+  const role = 'passenger';
 
   try {
     // Verificar si el usuario ya existe
@@ -16,19 +18,11 @@ const register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Crear usuario
+    // Crear usuario con role 'passenger'
     const newUser = await db.query(
-      'INSERT INTO users (email, password, name, phone, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, name, role, phone',
+      'INSERT INTO users (email, password, name, phone, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, name, role, phone, balance',
       [email, hashedPassword, name, phone, role]
     );
-
-    // Si es conductor, crear registro en drivers
-    if (role === 'driver') {
-      await db.query(
-        'INSERT INTO drivers (user_id, is_available) VALUES ($1, $2)',
-        [newUser.rows[0].id, true]
-      );
-    }
 
     // Generar token
     const token = jwt.sign(
@@ -38,7 +32,7 @@ const register = async (req, res) => {
     );
 
     res.status(201).json({
-      message: 'Usuario creado exitosamente',
+      message: 'Usuario creado exitosamente (pasajero)',
       token,
       user: newUser.rows[0]
     });
@@ -79,7 +73,8 @@ const login = async (req, res) => {
         email: user.rows[0].email,
         name: user.rows[0].name,
         role: user.rows[0].role,
-        phone: user.rows[0].phone
+        phone: user.rows[0].phone,
+        balance: user.rows[0].balance
       }
     });
   } catch (error) {
@@ -89,4 +84,3 @@ const login = async (req, res) => {
 };
 
 module.exports = { register, login };
-
