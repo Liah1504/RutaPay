@@ -1,3 +1,4 @@
+// backend/controllers/userController.js
 const db = require('../config/database');
 const fs = require('fs');
 const path = require('path');
@@ -43,6 +44,15 @@ const checkAvatarColumn = async () => {
   }
 };
 
+/**
+ * Construye la base URL del backend con protocolo y host (ej: http://localhost:5002)
+ */
+const getBackendBaseUrl = (req) => {
+  // Si defines BACKEND_URL en .env puedes usarlo; si no, construimos a partir de la request.
+  if (process.env.BACKEND_URL) return process.env.BACKEND_URL.replace(/\/$/, '');
+  return `${req.protocol}://${req.get('host')}`;
+};
+
 const getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -58,18 +68,24 @@ const getProfile = async (req, res) => {
 
     const row = result.rows[0];
 
-    // Comprueba mapping y que el archivo exista antes de asignarlo
+    // Si hay mapping en avatars.json, y el archivo existe, agregamos URL absoluta
     const avatarMap = readAvatarMap();
     const mappedFile = avatarMap[String(userId)];
     if (mappedFile) {
       const candidatePath = path.join(AVATAR_DIR, mappedFile);
       if (fs.existsSync(candidatePath)) {
-        row.avatar = `/public/avatars/${mappedFile}`;
+        const baseUrl = getBackendBaseUrl(req);
+        row.avatar = `${baseUrl}/public/avatars/${mappedFile}`;
       } else {
-        // si el archivo no existe, limpiar el mapping para evitar 404 repetidos
+        // archivo no existe: limpiar mapping para evitar 404 repetidos
         delete avatarMap[String(userId)];
         writeAvatarMap(avatarMap);
-        // no asignamos avatar en el row (seguirá sin avatar)
+      }
+    } else if (row.avatar) {
+      // si la columna avatar existe en BD y es relativa, normalizar a URL absoluta
+      if (typeof row.avatar === 'string' && row.avatar.startsWith('/')) {
+        const baseUrl = getBackendBaseUrl(req);
+        row.avatar = `${baseUrl}${row.avatar}`;
       }
     }
 
@@ -105,7 +121,8 @@ const updateProfile = async (req, res) => {
       avatarMap[String(userId)] = fileName;
       writeAvatarMap(avatarMap);
 
-      avatarUrl = `/public/avatars/${fileName}`;
+      const baseUrl = getBackendBaseUrl(req);
+      avatarUrl = `${baseUrl}/public/avatars/${fileName}`;
     }
 
     let resultRow = null;
@@ -119,6 +136,12 @@ const updateProfile = async (req, res) => {
       values.push(userId);
       const result = await db.query(q, values);
       resultRow = result.rows[0];
+
+      // Si resultRow.avatar es relativo, transformarlo a URL absoluta
+      if (resultRow && resultRow.avatar && typeof resultRow.avatar === 'string' && resultRow.avatar.startsWith('/')) {
+        const baseUrl = getBackendBaseUrl(req);
+        resultRow.avatar = `${baseUrl}${resultRow.avatar}`;
+      }
     }
 
     const response = resultRow ? { ...resultRow } : {};

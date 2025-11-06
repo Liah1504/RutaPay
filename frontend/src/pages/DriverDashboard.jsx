@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Paper, Typography, Box, Grid, Alert, CircularProgress,
   TableContainer, Table, TableHead, TableRow, TableCell, TableBody,
@@ -14,6 +14,7 @@ import EarningsChart from '../components/EarningsChart';
 
 const DriverDashboard = () => {
   const { user } = useAuth();
+
   const [driverProfile, setDriverProfile] = useState(null);
   const [trips, setTrips] = useState([]);
   const [loadingTrips, setLoadingTrips] = useState(true);
@@ -30,7 +31,8 @@ const DriverDashboard = () => {
 
   const [chartData, setChartData] = useState([]);
 
-  const setIfDifferent = (setter) => (newValue) => {
+  // setIfDifferent memoizado para ser estable entre renders
+  const setIfDifferent = useCallback((setter) => (newValue) => {
     setter((prev) => {
       try {
         const prevStr = JSON.stringify(prev || {});
@@ -40,7 +42,7 @@ const DriverDashboard = () => {
         return newValue;
       }
     });
-  };
+  }, []);
 
   const setDriverProfileIfDiff = setIfDifferent(setDriverProfile);
   const setTripsIfDiff = setIfDifferent(setTrips);
@@ -48,60 +50,50 @@ const DriverDashboard = () => {
   const setPaymentsSummaryIfDiff = setIfDifferent(setPaymentsSummary);
   const setChartDataIfDiff = setIfDifferent(setChartData);
 
-  const fetchIdRef = useRef(0);
+  // fetch functions (estables)
+  const fetchDriverProfile = useCallback(async () => {
+    try {
+      const res = await driverAPI.getProfile();
+      setDriverProfileIfDiff(res.data || null);
+    } catch (err) {
+      console.error('Error fetching driver profile:', err);
+      setMessage('Error cargando perfil');
+    }
+  }, [setDriverProfileIfDiff]);
 
   const fetchDriverTrips = useCallback(async () => {
     setLoadingTrips(true);
     try {
-      const response = await tripAPI.getDriverTrips();
-      setTripsIfDiff(response.data || []);
-    } catch (error) {
-      console.error('Error fetching trips:', error);
+      const res = await tripAPI.getDriverTrips();
+      setTripsIfDiff(res.data || []);
+    } catch (err) {
+      console.error('Error fetching trips:', err);
       setMessage('Error al cargar viajes');
     } finally {
       setLoadingTrips(false);
     }
   }, [setTripsIfDiff]);
 
-  const fetchDriverProfile = useCallback(async () => {
-    try {
-      const response = await driverAPI.getProfile();
-      setDriverProfileIfDiff(response.data || null);
-    } catch (error) {
-      console.error('Error fetching driver profile:', error);
-      setMessage('Error cargando perfil');
-    }
-  }, [setDriverProfileIfDiff]);
-
-  const fetchDriverPayments = useCallback(async () => {
-    setLoadingPayments(true);
+  const fetchDriverPayments = useCallback(async (opts = { overlay: false }) => {
+    // overlay: show overlay spinner if there are existing items
+    if (!opts.overlay) setLoadingPayments(true);
+    else setLoadingPayments(true);
     try {
       const res = await driverAPI.getPayments();
       setDriverPaymentsIfDiff(res.data || []);
     } catch (err) {
       console.error('Error fetching driver payments:', err);
+      setMessage('Error cargando pagos');
     } finally {
       setLoadingPayments(false);
     }
   }, [setDriverPaymentsIfDiff]);
 
-  // Mejora: pausa polling cuando la pestaña está oculta
-  const isTabActive = useRef(true);
-  useEffect(() => {
-    const onVisibility = () => {
-      isTabActive.current = !document.hidden;
-    };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, []);
-
-  const fetchPaymentsSummary = useCallback(async (date) => {
-    const myFetchId = ++fetchIdRef.current;
-    // siempre marcar loading al iniciar petición
-    setLoadingSummary(true);
+  const fetchPaymentsSummary = useCallback(async (date, opts = { overlay: false }) => {
+    if (!opts.overlay) setLoadingSummary(true);
+    else setLoadingSummary(true);
     try {
       const res = await driverAPI.getPaymentsSummary(date);
-      if (myFetchId !== fetchIdRef.current) return; // respuesta antigua: ignorar
       const totals = res.data?.totals || [];
       setPaymentsSummaryIfDiff(totals);
       setSummaryTotal(res.data?.total || 0);
@@ -111,40 +103,23 @@ const DriverDashboard = () => {
       console.error('Error fetching payments summary:', err);
       setMessage('Error al obtener resumen por ruta');
     } finally {
-      // limpiar loading siempre (evita quedarse en true)
       setLoadingSummary(false);
     }
   }, [setPaymentsSummaryIfDiff, setChartDataIfDiff]);
 
-  // Polling (más lento) y respetuoso: 120s y pausa si pestaña oculta
-  const pollingRef = useRef(null);
+  // Inicialización: se ejecuta una sola vez al montar (sin dependencias que cambien cada render)
   useEffect(() => {
     fetchDriverProfile();
     fetchDriverTrips();
-    fetchDriverPayments();
-    fetchPaymentsSummary(summaryDate);
+    fetchDriverPayments({ overlay: false });
+    fetchPaymentsSummary(summaryDate, { overlay: false });
+    // intentionally no dependencies -> run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    pollingRef.current = setInterval(() => {
-      if (!isTabActive.current) return; // si pestaña oculta, no hacer polling
-      fetchDriverTrips();
-      fetchDriverPayments();
-      fetchPaymentsSummary(summaryDate);
-    }, 120000); // 120s
-
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
-  }, [fetchDriverProfile, fetchDriverTrips, fetchDriverPayments, fetchPaymentsSummary, summaryDate]);
-
-  // Debounce al cambiar la fecha (300ms)
-  const debounceRef = useRef(null);
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      fetchPaymentsSummary(summaryDate);
-    }, 300);
-    return () => clearTimeout(debounceRef.current);
-  }, [summaryDate, fetchPaymentsSummary]);
+  // handlers manuales para evitar polling agresivo
+  const onRefreshPayments = () => fetchDriverPayments({ overlay: true });
+  const onRefreshSummary = () => fetchPaymentsSummary(summaryDate, { overlay: true });
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -177,8 +152,8 @@ const DriverDashboard = () => {
 
           <Grid item xs={12} md={4}>
             <Paper sx={{ p: 2, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
-              <Tooltip title="Actualizar pagos"><IconButton color="primary" onClick={() => fetchDriverPayments()}><RefreshIcon /></IconButton></Tooltip>
-              <Tooltip title="Resumen del día"><IconButton color="primary" onClick={() => fetchPaymentsSummary(summaryDate)}><SummarizeIcon /></IconButton></Tooltip>
+              <Tooltip title="Actualizar pagos"><IconButton color="primary" onClick={onRefreshPayments}><RefreshIcon /></IconButton></Tooltip>
+              <Tooltip title="Resumen del día"><IconButton color="primary" onClick={onRefreshSummary}><SummarizeIcon /></IconButton></Tooltip>
             </Paper>
           </Grid>
 
@@ -186,7 +161,7 @@ const DriverDashboard = () => {
             <Paper sx={{ p: 3, position: 'relative' }}>
               <Typography variant="h5" gutterBottom>Historial de Pagos Recibidos</Typography>
 
-              <Box sx={{ minHeight: 80 }}>
+              <Box sx={{ minHeight: 120 }}>
                 {loadingPayments && driverPayments.length === 0 ? (
                   <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
                 ) : driverPayments.length === 0 ? (
@@ -218,7 +193,11 @@ const DriverDashboard = () => {
               </Box>
 
               {loadingPayments && driverPayments.length > 0 && (
-                <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.6)' }}>
+                <Box sx={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(255,255,255,0.6)'
+                }}>
                   <CircularProgress />
                 </Box>
               )}
@@ -231,7 +210,7 @@ const DriverDashboard = () => {
                 <Typography variant="h5">Ganancias por Ruta (por día)</Typography>
                 <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
                   <TextField type="date" value={summaryDate} onChange={(e) => setSummaryDate(e.target.value)} size="small" InputLabelProps={{ shrink: true }} />
-                  <Button variant="contained" onClick={() => fetchPaymentsSummary(summaryDate)}>Ver</Button>
+                  <Button variant="contained" onClick={onRefreshSummary}>Ver</Button>
                 </Box>
               </Box>
 
@@ -273,7 +252,11 @@ const DriverDashboard = () => {
               </Box>
 
               {loadingSummary && paymentsSummary.length > 0 && (
-                <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.6)' }}>
+                <Box sx={{
+                  position: 'absolute', inset: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(255,255,255,0.6)'
+                }}>
                   <CircularProgress />
                 </Box>
               )}

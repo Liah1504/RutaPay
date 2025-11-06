@@ -1,3 +1,4 @@
+// frontend/src/pages/SettingsPage.jsx
 import React, { useState, useEffect } from 'react';
 import { Container, Paper, Typography, TextField, Button, Box, Avatar, Alert, CircularProgress } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
@@ -59,14 +60,14 @@ const SettingsPage = () => {
 
       const data = response.data || {};
 
-      // Si backend devolvió avatarUrl persistente (mapping en disk), limpiamos tmp y forzamos fetch
+      // Si backend devolvió avatarUrl absoluto, refrescamos el perfil desde backend
       if (data.avatarUrl) {
-        // Persistente en backend (mapping), limpiar tmp y refrescar perfil desde backend:
+        // limpiar tmp y forzar fetch del perfil actualizado
         localStorage.removeItem('tmpAvatarUrl');
-        try { await fetchAndUpdateUser(); } catch (err) { /* ignore */ }
+        try { await fetchAndUpdateUser(); } catch (err) { /* no crítico */ }
         setAvatarPreview(data.avatarUrl);
       } else {
-        // Si no persistente, dejamos preview temporal en localStorage para mostrar en otras vistas
+        // si no devolvió avatar persistente, guardamos preview temporal para Header
         if (avatarPreview) localStorage.setItem('tmpAvatarUrl', avatarPreview);
         try { await fetchAndUpdateUser(); } catch (err) { /* ignore */ }
       }

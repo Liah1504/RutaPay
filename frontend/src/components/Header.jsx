@@ -23,16 +23,13 @@ const Header = () => {
     navigate(path);
   };
 
-  // Avatar src: prioridad a backend (user.avatar) luego tmpAvatarUrl temporal
   const tmpAvatar = (typeof window !== 'undefined') ? localStorage.getItem('tmpAvatarUrl') : null;
   const avatarSrc = user?.avatar || tmpAvatar || null;
 
-  // Admin: abrir menu en avatar click
   const handleAvatarClick = (e) => {
     if (user?.role === USER_ROLES.ADMIN) {
       setAnchorEl(e.currentTarget);
     } else {
-      // driver/passenger: ir a settings
       navigate('/settings');
     }
   };
@@ -97,7 +94,6 @@ const Header = () => {
         </Drawer>
       )}
 
-      {/* Menu para admin sobre avatar */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleCloseMenu}>
         <MenuItem onClick={() => { handleCloseMenu(); navigate('/settings'); }}>Ajustes</MenuItem>
         <MenuItem onClick={handleLogout}>Cerrar sesión</MenuItem>
