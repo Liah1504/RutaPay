@@ -17,7 +17,7 @@ const AdminDashboard = () => {
   const { user, logout } = useAuth(); 
   const navigate = useNavigate();
 
-  // --- Estados de Estadísticas ---
+  // Estadísticas
   const [stats, setStats] = useState({ 
     totalUsers: 0, 
     totalDrivers: 0,
@@ -27,12 +27,12 @@ const AdminDashboard = () => {
   });
   const [loadingStats, setLoadingStats] = useState(true);
 
-  // --- Estados de Recargas ---
+  // Recargas
   const [pendingRecharges, setPendingRecharges] = useState([]);
   const [loadingRecharges, setLoadingRecharges] = useState(true);
   const [loadingRechargeAction, setLoadingRechargeAction] = useState(null); 
   
-  // --- Estados de Rutas (Gap 1) ---
+  // Rutas
   const [routes, setRoutes] = useState([]);
   const [loadingRoutes, setLoadingRoutes] = useState(true);
   const [openRouteForm, setOpenRouteForm] = useState(false);
@@ -40,7 +40,7 @@ const AdminDashboard = () => {
   const [routeFormError, setRouteFormError] = useState('');
   const [editingRoute, setEditingRoute] = useState(null);
 
-  // --- Estados de Usuarios (Gap 2) ---
+  // Usuarios
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [openUserForm, setOpenUserForm] = useState(false);
@@ -48,12 +48,10 @@ const AdminDashboard = () => {
   const [userFormError, setUserFormError] = useState('');
   const [editingUser, setEditingUser] = useState(null);
 
-  // --- Estado de Mensajes Globales ---
+  // Mensaje global
   const [message, setMessage] = useState({ text: '', type: 'info' });
 
-  // ==================================================================
-  // FUNCIÓN UTILITARIA: Formato de Moneda
-  // ==================================================================
+  // Formato de moneda
   const formatCurrency = (amount) => {
       const num = parseFloat(amount);
       if (isNaN(num)) return 'Bs 0,00';
@@ -61,9 +59,7 @@ const AdminDashboard = () => {
       return `Bs ${formatted}`; 
   };
 
-  // ==================================================================
-  // FUNCIÓN DE CARGA DE ESTADÍSTICAS
-  // ==================================================================
+  // Carga de estadísticas
   const fetchStats = useCallback(async () => {
     setLoadingStats(true);
     try {
@@ -77,10 +73,7 @@ const AdminDashboard = () => {
     }
   }, []);
   
-  // ==================================================================
-  // FUNCIONES DE CARGA DE DATOS (RECARGAS, RUTAS, USUARIOS)
-  // ==================================================================
-  
+  // Carga recargas
   const fetchPendingRecharges = useCallback(async () => {
     setLoadingRecharges(true);
     try {
@@ -94,6 +87,7 @@ const AdminDashboard = () => {
     }
   }, []);
 
+  // Carga rutas
   const fetchRoutes = useCallback(async () => {
     setLoadingRoutes(true);
     try {
@@ -107,6 +101,7 @@ const AdminDashboard = () => {
     }
   }, []);
 
+  // Carga usuarios
   const fetchAllUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
@@ -120,25 +115,19 @@ const AdminDashboard = () => {
     }
   }, []);
 
-  // Carga inicial y Polling (Para recargas)
+  // Carga inicial y polling
   useEffect(() => {
     fetchAllUsers();
     fetchRoutes();
     fetchStats(); 
-    
     fetchPendingRecharges(); 
     const pollRechargesInterval = setInterval(() => {
         fetchPendingRecharges();
     }, 15000); 
-
-    return () => clearInterval(pollRechargesInterval);
-    
+    return () => clearInterval(pollRechargesInterval);   
   }, [fetchAllUsers, fetchRoutes, fetchPendingRecharges, fetchStats]); 
 
-  // ==================================================================
-  // HANDLERS DE RECARGAS
-  // ==================================================================
-  
+  // Handlers recargas
   const handleConfirmRecharge = async (rechargeId) => {
     setLoadingRechargeAction(rechargeId);
     try {
@@ -153,21 +142,16 @@ const AdminDashboard = () => {
     }
   };
   
-  // ==================================================================
-  // HANDLERS DE USUARIOS (Gap 2)
-  // ==================================================================
-  
+  // Handlers usuarios
   const handleOpenUserModal = (user = null) => {
     setEditingUser(user);
     setUserFormError('');
     setOpenUserForm(true);
   };
-
   const handleCloseUserModal = () => {
     setOpenUserForm(false);
     setEditingUser(null);
   };
-
   const handleUserSubmit = async (formData) => {
     setIsSubmittingUser(true);
     setUserFormError('');
@@ -188,7 +172,6 @@ const AdminDashboard = () => {
       setIsSubmittingUser(false);
     }
   };
-
   const handleDeleteUser = async (userId, userName) => {
     if (window.confirm(`¿Estás seguro de ELIMINAR al usuario ${userName}? Esta acción es irreversible.`)) {
       try {
@@ -202,21 +185,16 @@ const AdminDashboard = () => {
     }
   };
   
-  // ==================================================================
-  // HANDLERS DE RUTAS (Gap 1)
-  // ==================================================================
-  
+  // Handlers rutas
   const handleOpenRouteModal = (route = null) => {
     setEditingRoute(route);
     setRouteFormError('');
     setOpenRouteForm(true);
   };
-
   const handleCloseRouteModal = () => {
     setOpenRouteForm(false);
     setEditingRoute(null);
   };
-
   const handleRouteSubmit = async (formData) => {
     setIsSubmittingRoute(true);
     setRouteFormError('');
@@ -237,7 +215,6 @@ const AdminDashboard = () => {
       setIsSubmittingRoute(false);
     }
   };
-
   const handleDeleteRoute = async (routeId, isActive) => {
     const actionText = isActive ? 'desactivar' : 'activar';
     if (window.confirm(`¿Seguro que quieres ${actionText} esta ruta?`)) {
@@ -252,43 +229,18 @@ const AdminDashboard = () => {
     }
   };
 
-  // ==================================================================
-  // LOGOUT (botón para admin que redirige al inicio)
-  // ==================================================================
-  const handleLogout = async () => {
-    try {
-      if (typeof logout === 'function') {
-        await logout();
-      }
-    } catch (err) {
-      console.warn('Error during logout:', err);
-    } finally {
-      // Redirigir al inicio público
-      navigate('/');
-    }
-  };
-
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <Header />
       <Container maxWidth="xl" sx={{ pt: 4, pb: 4 }}>
+        {/* === ELIMINADO el botón de cerrar sesión en la top bar === */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'text.primary' }}>
             👨‍💼 Panel de Administración
           </Typography>
-
-          {/* Botón de Cerrar Sesión (administrador) */}
-          <Box>
-            <Button variant="outlined" color="inherit" onClick={handleLogout}>
-              Cerrar sesión
-            </Button>
-          </Box>
         </Box>
-
         {message.text && <Alert severity={message.type} sx={{ mb: 2 }} onClose={() => setMessage({ text: '', type: 'info' })}>{message.text}</Alert>}
-
         <Grid container spacing={3}>
-          
           {/* --- SECCIÓN RECARGAS PENDIENTES --- */}
           <Grid item xs={12} md={7}>
             <Paper sx={{ p: 3, height: '100%' }}>
@@ -335,8 +287,7 @@ const AdminDashboard = () => {
               )}
             </Paper>
           </Grid>
-
-          {/* --- SECCIÓN GESTIÓN DE RUTAS (GAP 1) --- */}
+          {/* --- SECCIÓN GESTIÓN DE RUTAS --- */}
           <Grid item xs={12} md={5}>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -350,7 +301,6 @@ const AdminDashboard = () => {
                   Crear Ruta
                 </Button>
               </Box>
-              
               {loadingRoutes ? (
                 <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
               ) : routes.length === 0 ? (
@@ -401,13 +351,12 @@ const AdminDashboard = () => {
               )}
             </Paper>
           </Grid>
-          
-          {/* --- SECCIÓN INGRESOS Y ESTADÍSTICAS (DISEÑO FINAL) --- */}
+          {/* --- SECCIÓN INGRESOS Y ESTADÍSTICAS --- */}
           {loadingStats ? (
             <Grid item xs={12}><Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box></Grid>
           ) : (
             <>
-              {/* FILA 1: INGRESOS TOTALES (Prominente) */}
+              {/* INGRESOS TOTALES */}
               <Grid item xs={12}>
                 <Card sx={{bgcolor: '#4caf50', display: 'flex', alignItems: 'center', p: 2, height: '100px'}}> 
                     <CardContent sx={{pb: '16px !important'}}>
@@ -419,25 +368,19 @@ const AdminDashboard = () => {
                     </CardContent>
                 </Card>
               </Grid>
-
-              {/* FILA 2: 5 CONTADORES EN UNA SOLA LÍNEA (AHORA ALINEADOS PERFECTAMENTE) */}
+              {/* CONTADORES */}
               <Grid item xs={12}> 
-                  {/* Contenedor de Fila Única */}
                   <Grid container spacing={3}> 
-                      {/* Usamos md={2.4} que es el valor decimal 12/5. Esto asegura que los 5 items ocupen el 100% del ancho. */}
-                      
                       <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Usuarios</Typography><Typography variant="h4">{stats.totalUsers}</Typography></CardContent></Card></Grid>
                       <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Conductores</Typography><Typography variant="h4">{stats.totalDrivers}</Typography></CardContent></Card></Grid>
                       <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Viajes</Typography><Typography variant="h4">{stats.totalTrips}</Typography></CardContent></Card></Grid>
                       <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Viajes Activos</Typography><Typography variant="h4">{stats.activeTrips}</Typography></CardContent></Card></Grid>
                       <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Rutas Activas</Typography><Typography variant="h4">{routes.filter(r => r.is_active).length}</Typography></CardContent></Card></Grid>
-                      
                   </Grid>
               </Grid>
             </>
           )}
-
-          {/* --- SECCIÓN GESTIÓN DE USUARIOS (GAP 2) --- */}
+          {/* --- SECCIÓN GESTIÓN DE USUARIOS --- */}
           <Grid item xs={12}>
             <Paper sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -446,7 +389,6 @@ const AdminDashboard = () => {
                   Crear Usuario
                 </Button>
               </Box>
-
               {loadingUsers ? (
                 <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
               ) : users.length === 0 ? (
@@ -484,7 +426,7 @@ const AdminDashboard = () => {
                                 <EditIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
-                            {u.id !== user.id && ( // Evita que el admin se elimine a sí mismo
+                            {u.id !== user.id && (
                               <Tooltip title="Eliminar Usuario">
                                 <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
                                   <DeleteIcon fontSize="small" />
@@ -501,8 +443,6 @@ const AdminDashboard = () => {
             </Paper>
           </Grid>
         </Grid>
-
-        {/* --- MODALES --- */}
         <Dialog open={openRouteForm} onClose={handleCloseRouteModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingRoute ? 'Editar Ruta' : 'Crear Nueva Ruta'}</DialogTitle>
           <DialogContent>
@@ -515,7 +455,6 @@ const AdminDashboard = () => {
             />
           </DialogContent>
         </Dialog>
-
         <Dialog open={openUserForm} onClose={handleCloseUserModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}</DialogTitle>
           <DialogContent>
@@ -529,7 +468,6 @@ const AdminDashboard = () => {
             />
           </DialogContent>
         </Dialog>
-        
       </Container>
     </Box>
   );

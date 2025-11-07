@@ -1,9 +1,20 @@
 import React, { useState } from 'react';
-import { AppBar, Toolbar, IconButton, Typography, Avatar, Drawer, List, ListItem, ListItemIcon, ListItemText, Box, Menu, MenuItem } from '@mui/material';
+import AppBar from '@mui/material/AppBar';
+import Toolbar from '@mui/material/Toolbar';
+import IconButton from '@mui/material/IconButton';
 import MenuIcon from '@mui/icons-material/Menu';
-import SettingsIcon from '@mui/icons-material/Settings';
-import LogoutIcon from '@mui/icons-material/Logout';
+import Avatar from '@mui/material/Avatar';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Menu from '@mui/material/Menu';
+import MenuItem from '@mui/material/MenuItem';
+import Drawer from '@mui/material/Drawer';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
 import HomeIcon from '@mui/icons-material/Home';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { USER_ROLES } from '../utils/constants';
@@ -27,11 +38,7 @@ const Header = () => {
   const avatarSrc = user?.avatar || tmpAvatar || null;
 
   const handleAvatarClick = (e) => {
-    if (user?.role === USER_ROLES.ADMIN) {
-      setAnchorEl(e.currentTarget);
-    } else {
-      navigate('/settings');
-    }
+    setAnchorEl(e.currentTarget);
   };
 
   const handleCloseMenu = () => setAnchorEl(null);
@@ -84,11 +91,7 @@ const Header = () => {
                 <ListItemIcon><SettingsIcon /></ListItemIcon>
                 <ListItemText primary="Ajustes" />
               </ListItem>
-
-              <ListItem button onClick={() => { if (typeof logout === 'function') logout(); navigate('/login'); }}>
-                <ListItemIcon><LogoutIcon /></ListItemIcon>
-                <ListItemText primary="Cerrar sesión" />
-              </ListItem>
+              {/* NO hay botón 'Cerrar sesión' aquí */}
             </List>
           </Box>
         </Drawer>

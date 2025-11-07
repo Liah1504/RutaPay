@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   TextField,
   FormControl,
@@ -17,7 +17,7 @@ const UserForm = ({ onSubmit, onCancel, initialData = {}, isSubmitting }) => {
     email: '',
     password: '',
     phone: '',
-    role: 'passenger',
+    role: 'driver',
     ...initialData,
   });
 
@@ -83,10 +83,9 @@ const UserForm = ({ onSubmit, onCancel, initialData = {}, isSubmitting }) => {
           label="Rol"
           onChange={handleChange}
         >
-          {/* This form, used by the admin, CAN create other admins */}
           <MenuItem value="admin">Administrador</MenuItem>
           <MenuItem value="driver">Conductor</MenuItem>
-          <MenuItem value="passenger">Pasajero</MenuItem>
+          {/* <MenuItem value="passenger">Pasajero</MenuItem> ELIMINADO según requerimientos */}
         </Select>
       </FormControl>
       <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
