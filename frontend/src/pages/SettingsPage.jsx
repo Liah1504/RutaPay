@@ -1,4 +1,3 @@
-// frontend/src/pages/SettingsPage.jsx
 import React, { useState, useEffect } from 'react';
 import { Container, Paper, Typography, TextField, Button, Box, Avatar, Alert, CircularProgress } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,6 +10,8 @@ const SettingsPage = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [vehicle, setVehicle] = useState('');
+  const [plate, setPlate] = useState('');
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [avatarFile, setAvatarFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -20,6 +21,8 @@ const SettingsPage = () => {
     if (user) {
       setEmail(user.email || '');
       setPhone(user.phone || '');
+      setVehicle(user.vehicle || '');
+      setPlate(user.plate || '');
       const tmpAvatar = localStorage.getItem('tmpAvatarUrl');
       setAvatarPreview(tmpAvatar || user.avatar || null);
     }
@@ -52,26 +55,23 @@ const SettingsPage = () => {
         const form = new FormData();
         form.append('email', email);
         form.append('phone', phone);
+        form.append('vehicle', vehicle);
+        form.append('plate', plate);
         form.append('avatar', avatarFile);
         response = await userAPI.updateProfileForm(form);
       } else {
-        response = await userAPI.updateProfile({ email, phone });
+        response = await userAPI.updateProfile({ email, phone, vehicle, plate });
       }
 
       const data = response.data || {};
-
-      // Si backend devolvió avatarUrl absoluto, refrescamos el perfil desde backend
       if (data.avatarUrl) {
-        // limpiar tmp y forzar fetch del perfil actualizado
         localStorage.removeItem('tmpAvatarUrl');
         try { await fetchAndUpdateUser(); } catch (err) { /* no crítico */ }
         setAvatarPreview(data.avatarUrl);
       } else {
-        // si no devolvió avatar persistente, guardamos preview temporal para Header
         if (avatarPreview) localStorage.setItem('tmpAvatarUrl', avatarPreview);
         try { await fetchAndUpdateUser(); } catch (err) { /* ignore */ }
       }
-
       setMsg({ text: 'Perfil actualizado correctamente', type: 'success' });
     } catch (error) {
       const errorMsg = error.response?.data?.error || 'Error actualizando perfil';
@@ -88,29 +88,53 @@ const SettingsPage = () => {
       <Container maxWidth="sm" sx={{ mt: 4 }}>
         <Paper sx={{ p: 3 }}>
           <Typography variant="h5" gutterBottom>Ajustes de perfil</Typography>
-
-          {msg.text && <Alert severity={msg.type} sx={{ mb: 2 }}>{msg.text}</Alert>}
-
-          <Box component="form" onSubmit={handleSubmit} sx={{ display: 'grid', gap: 2 }}>
-            <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              <Avatar src={avatarPreview} sx={{ width: 64, height: 64 }} />
-              <Button variant="contained" component="label">
-                Subir foto
-                <input hidden accept="image/*" type="file" onChange={handleFile} />
+          <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3 }}>
+            <Avatar src={avatarPreview} sx={{ width: 80, height: 80 }} />
+          </Box>
+          <Box component="form" onSubmit={handleSubmit}>
+            <TextField
+              label="Correo electrónico"
+              variant="outlined"
+              fullWidth
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Teléfono"
+              variant="outlined"
+              fullWidth
+              value={phone}
+              onChange={e => setPhone(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Unidad/Tipo de vehículo"
+              variant="outlined"
+              fullWidth
+              value={vehicle}
+              onChange={e => setVehicle(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              label="Placa"
+              variant="outlined"
+              fullWidth
+              value={plate}
+              onChange={e => setPlate(e.target.value)}
+              sx={{ mb: 2 }}
+            />
+            <Button variant="contained" component="label" color="info" size="small" sx={{ mb: 2 }}>
+              Cambiar foto
+              <input hidden type="file" accept="image/*" onChange={handleFile} />
+            </Button>
+            <Box sx={{ mt: 2, display: 'flex', gap:2 }}>
+              <Button variant="contained" color="primary" type="submit" disabled={loading}>
+                {loading ? <CircularProgress size={24}/> : 'Guardar cambios'}
               </Button>
+              <Button variant="outlined" color="inherit" onClick={handleCancel}>Cancelar</Button>
             </Box>
-
-            <TextField label="Correo electrónico" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth />
-            <TextField label="Teléfono" value={phone} onChange={(e) => setPhone(e.target.value)} fullWidth />
-
-            <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-              <Button variant="outlined" onClick={handleCancel}>
-                Cancelar
-              </Button>
-              <Button type="submit" variant="contained" disabled={loading}>
-                {loading ? <CircularProgress size={20} /> : 'Guardar cambios'}
-              </Button>
-            </Box>
+            {msg.text && <Alert severity={msg.type} sx={{ mt: 2 }}>{msg.text}</Alert>}
           </Box>
         </Paper>
       </Container>

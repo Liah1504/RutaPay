@@ -1,270 +1,290 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Container, Paper, Typography, Box, Grid, Alert, CircularProgress,
-  TableContainer, Table, TableHead, TableRow, TableCell, TableBody,
-  TextField, Avatar, IconButton, Tooltip, Button
+  Container, Paper, Typography, Box, Grid, CircularProgress, TableContainer, Table,
+  TableHead, TableRow, TableCell, TableBody, Avatar, Chip, MenuItem,
+  Select, InputLabel, FormControl, TextField, Alert, Snackbar
 } from '@mui/material';
-import DirectionsCarIcon from '@mui/icons-material/DirectionsCar';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import SummarizeIcon from '@mui/icons-material/Summarize';
+import { Groups, MonetizationOn, TrendingUp } from '@mui/icons-material';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
-import { driverAPI, tripAPI } from '../services/api';
-import EarningsChart from '../components/EarningsChart';
+import { driverAPI } from '../services/api';
 
 const DriverDashboard = () => {
   const { user } = useAuth();
 
-  const [driverProfile, setDriverProfile] = useState(null);
-  const [trips, setTrips] = useState([]);
-  const [loadingTrips, setLoadingTrips] = useState(true);
-  const [message, setMessage] = useState('');
+  const [profile, setProfile] = useState(null);
+  const [routeName, setRouteName] = useState('');
+  const [historyPayments, setHistoryPayments] = useState([]);
+  const [loadingPayments, setLoadingPayments] = useState(true);
+  const [prevLength, setPrevLength] = useState(0);
+  const [showPaymentNotif, setShowPaymentNotif] = useState(false);
 
-  const [driverPayments, setDriverPayments] = useState([]);
-  const [loadingPayments, setLoadingPayments] = useState(false);
+  // Tarjetas superiores hoy
+  const [todaySummary, setTodaySummary] = useState({
+    passengers: 0, recaudado: 0, ganancias: 0,
+  });
+  const [loadingTodaySummary, setLoadingTodaySummary] = useState(true);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
-  const [summaryDate, setSummaryDate] = useState(todayIso);
-  const [paymentsSummary, setPaymentsSummary] = useState([]);
-  const [loadingSummary, setLoadingSummary] = useState(false);
-  const [summaryTotal, setSummaryTotal] = useState(0);
+  // Gráfica/filtro por día
+  const [graphData, setGraphData] = useState([]);
+  const [selectedDay, setSelectedDay] = useState('hoy');
+  const [loadingGraph, setLoadingGraph] = useState(true);
+  const [graphFirstLoad, setGraphFirstLoad] = useState(true);
 
-  const [chartData, setChartData] = useState([]);
+  // Filtro por pasajero
+  const [filterName, setFilterName] = useState('');
 
-  // setIfDifferent memoizado para ser estable entre renders
-  const setIfDifferent = useCallback((setter) => (newValue) => {
-    setter((prev) => {
-      try {
-        const prevStr = JSON.stringify(prev || {});
-        const newStr = JSON.stringify(newValue || {});
-        return prevStr === newStr ? prev : newValue;
-      } catch {
-        return newValue;
-      }
-    });
-  }, []);
-
-  const setDriverProfileIfDiff = setIfDifferent(setDriverProfile);
-  const setTripsIfDiff = setIfDifferent(setTrips);
-  const setDriverPaymentsIfDiff = setIfDifferent(setDriverPayments);
-  const setPaymentsSummaryIfDiff = setIfDifferent(setPaymentsSummary);
-  const setChartDataIfDiff = setIfDifferent(setChartData);
-
-  // fetch functions (estables)
-  const fetchDriverProfile = useCallback(async () => {
-    try {
-      const res = await driverAPI.getProfile();
-      setDriverProfileIfDiff(res.data || null);
-    } catch (err) {
-      console.error('Error fetching driver profile:', err);
-      setMessage('Error cargando perfil');
+  function getLastDays() {
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const dt = new Date();
+      dt.setDate(dt.getDate() - i);
+      const label = dt.toLocaleDateString('es-VE', { day: 'numeric', month: 'short' });
+      days.push({ value: dt.toISOString().slice(0, 10), label });
     }
-  }, [setDriverProfileIfDiff]);
+    return days;
+  }
+  const lastDays = getLastDays();
+  const todayString = new Date().toISOString().slice(0,10);
 
-  const fetchDriverTrips = useCallback(async () => {
-    setLoadingTrips(true);
-    try {
-      const res = await tripAPI.getDriverTrips();
-      setTripsIfDiff(res.data || []);
-    } catch (err) {
-      console.error('Error fetching trips:', err);
-      setMessage('Error al cargar viajes');
-    } finally {
-      setLoadingTrips(false);
-    }
-  }, [setTripsIfDiff]);
-
-  const fetchDriverPayments = useCallback(async (opts = { overlay: false }) => {
-    // overlay: show overlay spinner if there are existing items
-    if (!opts.overlay) setLoadingPayments(true);
-    else setLoadingPayments(true);
-    try {
-      const res = await driverAPI.getPayments();
-      setDriverPaymentsIfDiff(res.data || []);
-    } catch (err) {
-      console.error('Error fetching driver payments:', err);
-      setMessage('Error cargando pagos');
-    } finally {
-      setLoadingPayments(false);
-    }
-  }, [setDriverPaymentsIfDiff]);
-
-  const fetchPaymentsSummary = useCallback(async (date, opts = { overlay: false }) => {
-    if (!opts.overlay) setLoadingSummary(true);
-    else setLoadingSummary(true);
-    try {
-      const res = await driverAPI.getPaymentsSummary(date);
-      const totals = res.data?.totals || [];
-      setPaymentsSummaryIfDiff(totals);
-      setSummaryTotal(res.data?.total || 0);
-      const chart = (totals || []).map(r => ({ date: r.route_name || 'Sin ruta', earnings: Number(r.total || 0) }));
-      setChartDataIfDiff(chart);
-    } catch (err) {
-      console.error('Error fetching payments summary:', err);
-      setMessage('Error al obtener resumen por ruta');
-    } finally {
-      setLoadingSummary(false);
-    }
-  }, [setPaymentsSummaryIfDiff, setChartDataIfDiff]);
-
-  // Inicialización: se ejecuta una sola vez al montar (sin dependencias que cambien cada render)
+  // Polling refrescos
   useEffect(() => {
-    fetchDriverProfile();
-    fetchDriverTrips();
-    fetchDriverPayments({ overlay: false });
-    fetchPaymentsSummary(summaryDate, { overlay: false });
-    // intentionally no dependencies -> run once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let isMounted = true;
+    const fetchEverything = async () => {
+      try {
+        const profileRes = await driverAPI.getProfile();
+        if (isMounted) {
+          setProfile(profileRes.data || null);
+          setRouteName(profileRes.data?.route_name || "");
+        }
+      } catch {
+        if (isMounted) {
+          setProfile(null);
+          setRouteName("");
+        }
+      }
+      try {
+        const paymentsRes = await driverAPI.getPayments();
+        const pagos = Array.isArray(paymentsRes.data) ? paymentsRes.data : [];
+        if (isMounted) {
+          setLoadingPayments(false);
+          if (pagos.length > prevLength && prevLength !== 0) {
+            setShowPaymentNotif(true);
+            setTimeout(() => setShowPaymentNotif(false), 3500);
+          }
+          setPrevLength(pagos.length);
+          setHistoryPayments(pagos);
+        }
+      } catch { if (isMounted) setLoadingPayments(false); }
+      try {
+        const summaryRes = await driverAPI.getPaymentsSummary(todayString);
+        const pasajeros = Array.isArray(summaryRes.data.totals)
+          ? summaryRes.data.totals.filter(item => parseFloat(item.total) > 0).length
+          : 0;
+        if (isMounted) {
+          setTodaySummary({
+            passengers: pasajeros,
+            recaudado: parseFloat(summaryRes.data.total) || 0,
+            ganancias: parseFloat(summaryRes.data.total) || 0
+          });
+          setLoadingTodaySummary(false);
+        }
+      } catch { if (isMounted) setLoadingTodaySummary(false); }
+      try {
+        const date = selectedDay === "hoy" ? todayString : selectedDay;
+        const graphRes = await driverAPI.getPaymentsSummary(date);
+        if (isMounted) {
+          if (Array.isArray(graphRes.data.totals)) setGraphData(graphRes.data.totals);
+          else if (Array.isArray(graphRes.data)) setGraphData(graphRes.data);
+          else setGraphData([]);
+          setLoadingGraph(false);
+          setGraphFirstLoad(false);
+        }
+      } catch { if (isMounted) setLoadingGraph(false); }
+    };
 
-  // handlers manuales para evitar polling agresivo
-  const onRefreshPayments = () => fetchDriverPayments({ overlay: true });
-  const onRefreshSummary = () => fetchPaymentsSummary(summaryDate, { overlay: true });
+    fetchEverything();
+    const interval = setInterval(fetchEverything, 10000);
+    return () => { isMounted = false; clearInterval(interval); };
+    // eslint-disable-next-line
+  }, [selectedDay]);
+
+  // Filtro por nombre pasajero
+  const filteredPayments = filterName.trim()
+    ? historyPayments.filter(
+        p =>
+          p.passenger_name &&
+          p.passenger_name.toLowerCase().includes(filterName.trim().toLowerCase())
+      )
+    : historyPayments;
 
   return (
-    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
+    <>
       <Header />
-      <Container maxWidth="lg" sx={{ pt: 4, pb: 4 }}>
-        {message && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setMessage('')}>{message}</Alert>}
+      <Container maxWidth="lg" sx={{ mt: 3, mb: 4 }}>
+        <Snackbar
+          open={showPaymentNotif}
+          anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+          autoHideDuration={3500}
+          onClose={() => setShowPaymentNotif(false)}
+        >
+          <Alert severity="success" variant="filled" sx={{ fontSize: 16 }}>
+            ¡Nuevo pago recibido!
+          </Alert>
+        </Snackbar>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
-          <Avatar sx={{ bgcolor: 'primary.main' }}><DirectionsCarIcon /></Avatar>
-          <Typography variant="h4" sx={{ fontWeight: 700 }}>Panel del Conductor</Typography>
+        {/* Cabecera principal */}
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2, mb: 3, justifyContent: 'space-between' }}>
+          <Paper elevation={2} sx={{ p: 3, flex: 1, minWidth: 270 }}>
+            <Typography variant="h5" fontWeight={700}>
+              {routeName}
+            </Typography>
+          </Paper>
+          <Paper elevation={2} sx={{
+            p: 3, flex: 1, maxWidth: 250, bgcolor: 'white', display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center'
+          }}>
+            <Typography align="center" variant="h4" color="error.main" fontWeight={700}>
+              {new Date().toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' })}
+            </Typography>
+            <Typography variant="caption">Hora actual</Typography>
+          </Paper>
         </Box>
 
-        <Grid container spacing={3}>
+        <Paper elevation={1} sx={{ bgcolor: '#0C2946', color: '#fff', p: 3, mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box>
+            <Typography variant="h6" fontWeight={700}>
+              Bienvenido, {user?.name || 'Conductor'}
+            </Typography>
+            <Box>
+              Estado: <Chip label="En ruta" color="success" size="small" />
+            </Box>
+          </Box>
+          <Avatar src={user?.avatar} sx={{ width: 64, height: 64, border: '2px solid #fff' }} />
+        </Paper>
+
+        {/* Tarjetas estadísticas DINÁMICAS Y REACTIVAS */}
+        <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 3, height: '100%', bgcolor: 'success.light', color: 'white' }}>
-              <Typography variant="h6">Tu Saldo (Ganancias)</Typography>
-              <Typography variant="h4">{user?.balance ? parseFloat(user.balance).toFixed(2) : '0.00'} Bs</Typography>
+            <Paper elevation={1} sx={{ py: 2, px: 4, display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Groups sx={{ color: 'error.main', fontSize: 32 }} />
+              <Box>
+                <Typography variant="body1" fontWeight={500}>
+                  {loadingTodaySummary ? <CircularProgress size={24} /> : todaySummary.passengers}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">Pasajeros hoy</Typography>
+              </Box>
             </Paper>
           </Grid>
-
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 3, height: '100%' }}>
-              <Typography variant="h6">Mi Vehículo / Perfil</Typography>
-              <Typography><strong>Vehículo:</strong> {driverProfile?.vehicle_type || 'No reg.'}</Typography>
-              <Typography><strong>Placa:</strong> {driverProfile?.vehicle_plate || 'No reg.'}</Typography>
-              <Typography><strong>Código:</strong> {driverProfile?.driver_code || 'N/A'}</Typography>
-              <Typography sx={{ mt: 1, color: 'text.secondary' }}>{driverProfile?.name ? `Conductor: ${driverProfile.name}` : ''}</Typography>
+            <Paper elevation={1} sx={{ py: 2, px: 4, display: 'flex', alignItems: 'center', gap: 2 }}>
+              <MonetizationOn sx={{ color: 'error.main', fontSize: 32 }} />
+              <Box>
+                <Typography variant="body1" fontWeight={500}>
+                  {loadingTodaySummary ? <CircularProgress size={24} /> : `${todaySummary.recaudado} BS`}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">Recaudado</Typography>
+              </Box>
             </Paper>
           </Grid>
-
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 2, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 }}>
-              <Tooltip title="Actualizar pagos"><IconButton color="primary" onClick={onRefreshPayments}><RefreshIcon /></IconButton></Tooltip>
-              <Tooltip title="Resumen del día"><IconButton color="primary" onClick={onRefreshSummary}><SummarizeIcon /></IconButton></Tooltip>
-            </Paper>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Paper sx={{ p: 3, position: 'relative' }}>
-              <Typography variant="h5" gutterBottom>Historial de Pagos Recibidos</Typography>
-
-              <Box sx={{ minHeight: 120 }}>
-                {loadingPayments && driverPayments.length === 0 ? (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
-                ) : driverPayments.length === 0 ? (
-                  <Typography color="text.secondary">No hay pagos registrados.</Typography>
-                ) : (
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Ruta</TableCell>
-                          <TableCell>Pasajero</TableCell>
-                          <TableCell>Monto (Bs)</TableCell>
-                          <TableCell>Fecha</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {driverPayments.map((p) => (
-                          <TableRow key={p.id}>
-                            <TableCell>{p.route_name}</TableCell>
-                            <TableCell>{p.passenger_name}</TableCell>
-                            <TableCell>{parseFloat(p.amount).toFixed(2)}</TableCell>
-                            <TableCell>{new Date(p.created_at).toLocaleString()}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                )}
+            <Paper elevation={1} sx={{ py: 2, px: 4, display: 'flex', alignItems: 'center', gap: 2 }}>
+              <TrendingUp sx={{ color: 'error.main', fontSize: 32 }} />
+              <Box>
+                <Typography variant="body1" fontWeight={500}>
+                  {loadingTodaySummary ? <CircularProgress size={24} /> : `${todaySummary.ganancias} BS`}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">Ganancias (Hoy)</Typography>
               </Box>
-
-              {loadingPayments && driverPayments.length > 0 && (
-                <Box sx={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(255,255,255,0.6)'
-                }}>
-                  <CircularProgress />
-                </Box>
-              )}
-            </Paper>
-          </Grid>
-
-          <Grid item xs={12}>
-            <Paper sx={{ p: 3, position: 'relative' }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h5">Ganancias por Ruta (por día)</Typography>
-                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                  <TextField type="date" value={summaryDate} onChange={(e) => setSummaryDate(e.target.value)} size="small" InputLabelProps={{ shrink: true }} />
-                  <Button variant="contained" onClick={onRefreshSummary}>Ver</Button>
-                </Box>
-              </Box>
-
-              <Box sx={{ minHeight: 120 }}>
-                {loadingSummary && paymentsSummary.length === 0 ? (
-                  <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}><CircularProgress /></Box>
-                ) : paymentsSummary.length === 0 ? (
-                  <Typography color="text.secondary">No hay movimientos para la fecha seleccionada.</Typography>
-                ) : (
-                  <>
-                    <TableContainer>
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Ruta</TableCell>
-                            <TableCell align="right">Total (Bs)</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {paymentsSummary.map((r) => (
-                            <TableRow key={r.route_id}>
-                              <TableCell>{r.route_name}</TableCell>
-                              <TableCell align="right">{parseFloat(r.total).toFixed(2)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-
-                    <Box sx={{ mt: 3 }}>
-                      <EarningsChart data={chartData} title="Ganancias por Ruta" />
-                    </Box>
-
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                      <Typography variant="h6">Total del día: <strong>{parseFloat(summaryTotal).toFixed(2)} Bs</strong></Typography>
-                    </Box>
-                  </>
-                )}
-              </Box>
-
-              {loadingSummary && paymentsSummary.length > 0 && (
-                <Box sx={{
-                  position: 'absolute', inset: 0,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(255,255,255,0.6)'
-                }}>
-                  <CircularProgress />
-                </Box>
-              )}
             </Paper>
           </Grid>
         </Grid>
+        
+        {/* Estadísticas diarias - ocupa TODO el ancho */}
+        <Box sx={{ mb: 7 }}>
+          <Typography variant="h6" color="primary" fontWeight={700} sx={{ mb: 2 }}>Estadísticas diarias</Typography>
+          <Grid container spacing={0}>
+            <Grid item xs={12}>
+              <Box sx={{ maxWidth: '100vw', mb: 2 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Día</InputLabel>
+                  <Select
+                    label="Día"
+                    value={selectedDay}
+                    onChange={e => {
+                      setLoadingGraph(true);
+                      setSelectedDay(e.target.value);
+                    }}
+                  >
+                    <MenuItem value="hoy">Hoy</MenuItem>
+                    {lastDays.map((d) => (
+                      <MenuItem key={d.value} value={d.value}>{d.label}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+              <Box sx={{ height: 260, background: 'white', borderRadius: 2, width: "100%" }}>
+                {loadingGraph && graphFirstLoad ? (
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 250 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={Array.isArray(graphData) ? graphData : []}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="route_name" />
+                      <YAxis />
+                      <Tooltip />
+                      <Line type="monotone" dataKey="total" stroke="#fa4e48" strokeWidth={3} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </Box>
+            </Grid>
+          </Grid>
+        </Box>
+
+        {/* Historial de pagos recibidos con filtro por nombre */}
+        <Paper elevation={1} sx={{ mt: 2, p: 3 }}>
+          <Typography variant="h6" fontWeight={700} color="primary" sx={{ mb: 2 }}>Historial de Pagos Recibidos</Typography>
+          <TextField
+            label="Filtrar por pasajero"
+            variant="outlined"
+            fullWidth
+            sx={{ mb: 2, maxWidth: 280 }}
+            value={filterName}
+            onChange={e => setFilterName(e.target.value)}
+          />
+          {loadingPayments ? (
+            <CircularProgress />
+          ) : (
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Ruta</TableCell>
+                    <TableCell>Pasajero</TableCell>
+                    <TableCell>Monto (Bs)</TableCell>
+                    <TableCell>Fecha</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredPayments.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell>{p.route_name}</TableCell>
+                      <TableCell>{p.passenger_name}</TableCell>
+                      <TableCell>{parseFloat(p.amount).toFixed(2)} Bs</TableCell>
+                      <TableCell>{new Date(p.created_at).toLocaleString()}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Paper>
       </Container>
-    </Box>
+    </>
   );
 };
 
