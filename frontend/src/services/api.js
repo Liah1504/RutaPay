@@ -38,6 +38,7 @@ export const driverAPI = {
   getProfile: () => axios.get(`${API_BASE}/drivers/profile`),
   getPayments: () => axios.get(`${API_BASE}/drivers/payments`),
   getPaymentsSummary: (date) => axios.get(`${API_BASE}/drivers/payments/summary`, { params: { date } }),
+  getNotifications: (limit = 5) => axios.get(`${API_BASE}/drivers/notifications`, { params: { limit } }),
   updateProfile: (data) => axios.put(`${API_BASE}/drivers/profile`, data)
 };
 

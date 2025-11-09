@@ -12,6 +12,7 @@ const SettingsPage = () => {
   const [phone, setPhone] = useState('');
   const [vehicle, setVehicle] = useState('');
   const [plate, setPlate] = useState('');
+  const [license, setLicense] = useState('');
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [avatarFile, setAvatarFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -21,8 +22,9 @@ const SettingsPage = () => {
     if (user) {
       setEmail(user.email || '');
       setPhone(user.phone || '');
-      setVehicle(user.vehicle || '');
-      setPlate(user.plate || '');
+      setVehicle(user.vehicle || user.vehicle_type || '');
+      setPlate(user.plate || user.vehicle_plate || '');
+      setLicense(user.license_number || '');
       const tmpAvatar = localStorage.getItem('tmpAvatarUrl');
       setAvatarPreview(tmpAvatar || user.avatar || null);
     }
@@ -57,10 +59,11 @@ const SettingsPage = () => {
         form.append('phone', phone);
         form.append('vehicle', vehicle);
         form.append('plate', plate);
+        form.append('license', license);
         form.append('avatar', avatarFile);
         response = await userAPI.updateProfileForm(form);
       } else {
-        response = await userAPI.updateProfile({ email, phone, vehicle, plate });
+        response = await userAPI.updateProfile({ email, phone, vehicle, plate, license });
       }
 
       const data = response.data || {};
@@ -92,38 +95,11 @@ const SettingsPage = () => {
             <Avatar src={avatarPreview} sx={{ width: 80, height: 80 }} />
           </Box>
           <Box component="form" onSubmit={handleSubmit}>
-            <TextField
-              label="Correo electrónico"
-              variant="outlined"
-              fullWidth
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              label="Teléfono"
-              variant="outlined"
-              fullWidth
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              label="Unidad/Tipo de vehículo"
-              variant="outlined"
-              fullWidth
-              value={vehicle}
-              onChange={e => setVehicle(e.target.value)}
-              sx={{ mb: 2 }}
-            />
-            <TextField
-              label="Placa"
-              variant="outlined"
-              fullWidth
-              value={plate}
-              onChange={e => setPlate(e.target.value)}
-              sx={{ mb: 2 }}
-            />
+            <TextField label="Correo electrónico" variant="outlined" fullWidth value={email} onChange={e => setEmail(e.target.value)} sx={{ mb: 2 }} />
+            <TextField label="Teléfono" variant="outlined" fullWidth value={phone} onChange={e => setPhone(e.target.value)} sx={{ mb: 2 }} />
+            <TextField label="Unidad/Tipo de vehículo" variant="outlined" fullWidth value={vehicle} onChange={e => setVehicle(e.target.value)} sx={{ mb: 2 }} />
+            <TextField label="Placa" variant="outlined" fullWidth value={plate} onChange={e => setPlate(e.target.value)} sx={{ mb: 2 }} />
+            <TextField label="Número de licencia" variant="outlined" fullWidth value={license} onChange={e => setLicense(e.target.value)} sx={{ mb: 2 }} />
             <Button variant="contained" component="label" color="info" size="small" sx={{ mb: 2 }}>
               Cambiar foto
               <input hidden type="file" accept="image/*" onChange={handleFile} />

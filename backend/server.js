@@ -1,24 +1,36 @@
-// backend/server.js
-
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path'); // <-- añadido para servir archivos estáticos
 
-// Importar rutas
-const authRoutes = require('./routes/auth');
-const driverRoutes = require('./routes/drivers');
-const routeRoutes = require('./routes/routes');
-const tripRoutes = require('./routes/trips');
-const rechargesRoutes = require('./routes/recharges');
-const userRoutes = require('./routes/userRoutes');
-const adminRoutes = require('./routes/admin');
-const paymentRoutes = require('./routes/payment');
-
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5002;
+
+// Helper para requires tolerantes (no romperá el arranque si falta algún archivo)
+function tryRequire(modulePath, friendlyName) {
+  try {
+    const mod = require(modulePath);
+    console.log(`✅ Require exitoso: ${modulePath}`);
+    return mod;
+  } catch (err) {
+    console.warn(`⚠️ No se pudo require '${modulePath}' (${friendlyName || 'módulo'}):`, err.message);
+    return null;
+  }
+}
+
+// Importar rutas de forma tolerante (si alguna falta no romperá el servidor)
+const authRoutes = tryRequire('./routes/auth', 'auth routes');
+const driverRoutes = tryRequire('./routes/drivers', 'driver routes');
+const routeRoutes = tryRequire('./routes/routes', 'route routes');
+const tripRoutes = tryRequire('./routes/trips', 'trip routes');
+const rechargesRoutes = tryRequire('./routes/recharges', 'recharges routes');
+const userRoutes = tryRequire('./routes/userRoutes', 'user routes');
+const adminRoutes = tryRequire('./routes/admin', 'admin routes');
+const paymentRoutes = tryRequire('./routes/payment', 'payment routes');
+
+console.log('🔍 Cargando rutas...');
 
 // ✅ CORS CONFIGURADO
 app.use(cors({
@@ -50,8 +62,6 @@ app.use(express.urlencoded({ extended: true }));
 
 // Servir archivos estáticos (avatars subidos a /backend/public/avatars)
 app.use('/public', express.static(path.join(__dirname, 'public')));
-
-console.log('🔍 Cargando rutas...');
 
 // 🌐 ENDPOINT DE SALUD - SIN AUTENTICACIÓN
 app.get('/api/health', (req, res) => {
@@ -114,15 +124,62 @@ app.get('/', (req, res) => {
   });
 });
 
-// 📍 RUTAS PRINCIPALES
-app.use('/api/auth', authRoutes);
-app.use('/api/drivers', driverRoutes);
-app.use('/api/routes', routeRoutes);
-app.use('/api/trips', tripRoutes);
-app.use('/api/recharges', rechargesRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/payment', paymentRoutes);
+// 📍 MONTAR RUTAS PRINCIPALES (solo si existen)
+if (authRoutes) {
+  app.use('/api/auth', authRoutes);
+  console.log('✅ Mounted: /api/auth');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/auth porque authRoutes no está disponible');
+}
+
+if (driverRoutes) {
+  app.use('/api/drivers', driverRoutes);
+  console.log('✅ Mounted: /api/drivers');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/drivers porque driverRoutes no está disponible');
+}
+
+if (routeRoutes) {
+  app.use('/api/routes', routeRoutes);
+  console.log('✅ Mounted: /api/routes');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/routes porque routeRoutes no está disponible');
+}
+
+if (tripRoutes) {
+  app.use('/api/trips', tripRoutes);
+  console.log('✅ Mounted: /api/trips');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/trips porque tripRoutes no está disponible');
+}
+
+if (rechargesRoutes) {
+  app.use('/api/recharges', rechargesRoutes);
+  console.log('✅ Mounted: /api/recharges');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/recharges porque rechargesRoutes no está disponible');
+}
+
+if (userRoutes) {
+  app.use('/api/users', userRoutes);
+  console.log('✅ Mounted: /api/users');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/users porque userRoutes no está disponible');
+}
+
+if (adminRoutes) {
+  app.use('/api/admin', adminRoutes);
+  console.log('✅ Mounted: /api/admin');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/admin porque adminRoutes no está disponible');
+}
+
+if (paymentRoutes) {
+  app.use('/api/payment', paymentRoutes);
+  console.log('✅ Mounted: /api/payment');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/payment porque paymentRoutes no está disponible');
+}
 
 // ✅ RUTA DE PRUEBA PARA RUTAS - SIN AUTENTICACIÓN (TEMPORAL)
 app.get('/api/routes/test', (req, res) => {
