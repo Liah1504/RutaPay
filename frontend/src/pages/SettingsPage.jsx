@@ -4,9 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
 import { userAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { getAvatarSrc } from '../utils/getAvatarSrc';
 
 const SettingsPage = () => {
-  const { user, fetchAndUpdateUser } = useAuth();
+  const { user, fetchAndUpdateUser, setUser } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -21,12 +22,14 @@ const SettingsPage = () => {
   useEffect(() => {
     if (user) {
       setEmail(user.email || '');
-      setPhone(user.phone || '');
+      setPhone(user.phone || user.telefono || '');
       setVehicle(user.vehicle || user.vehicle_type || '');
       setPlate(user.plate || user.vehicle_plate || '');
       setLicense(user.license_number || '');
-      const tmpAvatar = localStorage.getItem('tmpAvatarUrl');
-      setAvatarPreview(tmpAvatar || user.avatar || null);
+      // usar tmp por usuario (no una key global)
+      const tmpKey = `tmpAvatarUrl_${user.id}`;
+      const tmpAvatar = localStorage.getItem(tmpKey);
+      setAvatarPreview(tmpAvatar || getAvatarSrc(user) || null);
     }
   }, [user]);
 
@@ -46,10 +49,21 @@ const SettingsPage = () => {
     return navigate('/passenger');
   };
 
+  // Actualiza localmente y guarda tmp por userId
+  const persistAvatarPreviewForUser = (userId, url) => {
+    const key = `tmpAvatarUrl_${userId}`;
+    try {
+      if (url) localStorage.setItem(key, url);
+      else localStorage.removeItem(key);
+    } catch (err) { /* ignore */ }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMsg({ text: '', type: 'info' });
+
+    const prevUser = user;
 
     try {
       let response;
@@ -57,29 +71,51 @@ const SettingsPage = () => {
         const form = new FormData();
         form.append('email', email);
         form.append('phone', phone);
-        form.append('vehicle', vehicle);
-        form.append('plate', plate);
-        form.append('license', license);
+        form.append('vehicle_type', vehicle);
+        form.append('vehicle_plate', plate);
+        form.append('license_number', license);
         form.append('avatar', avatarFile);
         response = await userAPI.updateProfileForm(form);
       } else {
-        response = await userAPI.updateProfile({ email, phone, vehicle, plate, license });
+        response = await userAPI.updateProfile({ email, phone, vehicle_type: vehicle, vehicle_plate: plate, license_number: license });
       }
 
-      const data = response.data || {};
-      if (data.avatarUrl) {
-        localStorage.removeItem('tmpAvatarUrl');
-        try { await fetchAndUpdateUser(); } catch (err) { /* no crítico */ }
-        setAvatarPreview(data.avatarUrl);
+      const data = response?.data;
+      // extraer usuario según shape (user o directamente)
+      const userObj = data?.user && typeof data.user === 'object' ? data.user : (data && typeof data === 'object' ? data : null);
+
+      if (userObj) {
+        // actualizar contexto y localStorage con lo que devuelve el backend (clave: avatar_url)
+        setUser(userObj);
+        try { localStorage.setItem('rutapay_user', JSON.stringify(userObj)); } catch (err) {}
+        if (userObj.avatar_url || userObj.avatar) {
+          const avatarUrl = userObj.avatar_url || userObj.avatar;
+          setAvatarPreview(avatarUrl);
+          persistAvatarPreviewForUser(userObj.id, avatarUrl);
+        } else if (avatarPreview) {
+          // si no devolvió URL, mantener preview local (base64) solo para este usuario
+          persistAvatarPreviewForUser(userObj.id, avatarPreview);
+        }
       } else {
-        if (avatarPreview) localStorage.setItem('tmpAvatarUrl', avatarPreview);
-        try { await fetchAndUpdateUser(); } catch (err) { /* ignore */ }
+        // fallback: intentar fetch seguro
+        const updated = await fetchAndUpdateUser();
+        if (updated) {
+          setAvatarPreview(updated.avatar_url || updated.avatar || avatarPreview);
+          persistAvatarPreviewForUser(updated.id, updated.avatar_url || updated.avatar || avatarPreview);
+        } else {
+          // restaurar prevUser para evitar blanqueo
+          setUser(prevUser);
+          try { localStorage.setItem('rutapay_user', JSON.stringify(prevUser)); } catch (err) {}
+        }
       }
+
       setMsg({ text: 'Perfil actualizado correctamente', type: 'success' });
     } catch (error) {
-      const errorMsg = error.response?.data?.error || 'Error actualizando perfil';
-      setMsg({ text: errorMsg, type: 'error' });
       console.error('Error al actualizar perfil:', error);
+      setUser(prevUser);
+      try { localStorage.setItem('rutapay_user', JSON.stringify(prevUser)); } catch (err) {}
+      const errorMsg = error.response?.data?.error || error.message || 'Error actualizando perfil';
+      setMsg({ text: errorMsg, type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -92,7 +128,7 @@ const SettingsPage = () => {
         <Paper sx={{ p: 3 }}>
           <Typography variant="h5" gutterBottom>Ajustes de perfil</Typography>
           <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3 }}>
-            <Avatar src={avatarPreview} sx={{ width: 80, height: 80 }} />
+            <Avatar src={avatarPreview || '/images/default-avatar.png'} sx={{ width: 80, height: 80 }} />
           </Box>
           <Box component="form" onSubmit={handleSubmit}>
             <TextField label="Correo electrónico" variant="outlined" fullWidth value={email} onChange={e => setEmail(e.target.value)} sx={{ mb: 2 }} />

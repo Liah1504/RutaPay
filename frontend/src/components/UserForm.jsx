@@ -1,41 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box, TextField, Button, MenuItem, Select, InputLabel, FormControl, Grid, CircularProgress, Typography
+  Box, TextField, Button, MenuItem, Select, InputLabel, FormControl, Grid, CircularProgress
 } from '@mui/material';
 
-// Formulario para crear/editar usuarios desde admin.
-// Nota: ahora ofrece solo opciones de rol 'driver' y 'admin' (no passenger)
-// Evita reinicializar inputs a menos que initialData cambie significativamente.
-const UserForm = ({ isSubmitting, onCancel, onSubmit, initialData = undefined, requirePassword = true }) => {
-  const [name, setName] = useState(initialData?.name || '');
-  const [email, setEmail] = useState(initialData?.email || '');
+// Props: isSubmitting, onCancel, onSubmit, initialData = {}, requirePassword = true
+const UserForm = ({ isSubmitting, onCancel, onSubmit, initialData = {}, requirePassword = true }) => {
+  // Normalizar initialData por si viene null/undefined
+  const data = initialData || {};
+
+  const [name, setName] = useState(data.name || '');
+  const [email, setEmail] = useState(data.email || '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(initialData?.role || 'driver'); // por defecto driver
-  const [balance, setBalance] = useState(initialData?.balance != null ? String(initialData.balance) : '0.00');
+  const [role, setRole] = useState(data.role || 'driver'); // por defecto driver
+  const [balance, setBalance] = useState(data.balance != null ? String(data.balance) : '0.00');
 
   // Campos específicos de conductor (opcionales)
-  const [vehicle_plate, setVehiclePlate] = useState(initialData?.vehicle_plate || '');
-  const [license_number, setLicenseNumber] = useState(initialData?.license_number || '');
-  const [vehicle_type, setVehicleType] = useState(initialData?.vehicle_type || '');
+  const [vehicle_plate, setVehiclePlate] = useState(data.vehicle_plate || '');
+  const [license_number, setLicenseNumber] = useState(data.license_number || '');
+  const [vehicle_type, setVehicleType] = useState(data.vehicle_type || '');
 
-  // Inicializar solo cuando initialData cambia de entidad (por ejemplo abre modal o cambia editingUser.id)
+  // Inicializar solo cuando cambie realmente el user (por ejemplo id o email)
   useEffect(() => {
-    // Si initialData es undefined (modal creación), iniciamos valores por defecto
-    setName(initialData?.name || '');
-    setEmail(initialData?.email || '');
+    const d = initialData || {};
+    setName(d.name || '');
+    setEmail(d.email || '');
     setPassword('');
-    setRole(initialData?.role || 'driver');
-    setBalance(initialData?.balance != null ? String(initialData.balance) : '0.00');
-    setVehiclePlate(initialData?.vehicle_plate || '');
-    setLicenseNumber(initialData?.license_number || '');
-    setVehicleType(initialData?.vehicle_type || '');
+    setRole(d.role || 'driver');
+    setBalance(d.balance != null ? String(d.balance) : '0.00');
+    setVehiclePlate(d.vehicle_plate || '');
+    setLicenseNumber(d.license_number || '');
+    setVehicleType(d.vehicle_type || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialData?.id, initialData?.email]); // dependencias limitadas para evitar reinicios en cada render
+  }, [initialData?.id, initialData?.email]); // dependencias estables: evita reinicios por referencia de objeto
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    // Validaciones básicas
     if (!name || !email || (requirePassword && !password)) {
-      // podrías setear un error local; aquí simplemente no submit
       return;
     }
     const payload = {
@@ -53,9 +54,6 @@ const UserForm = ({ isSubmitting, onCancel, onSubmit, initialData = undefined, r
 
   return (
     <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Crear/Editar usuario (roles disponibles: DRIVER, ADMIN)
-      </Typography>
       <Grid container spacing={2}>
         <Grid item xs={12}>
           <TextField label="Nombre" value={name} onChange={(e) => setName(e.target.value)} fullWidth required />
@@ -96,7 +94,7 @@ const UserForm = ({ isSubmitting, onCancel, onSubmit, initialData = undefined, r
         <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
           <Button onClick={onCancel} disabled={isSubmitting}>Cancelar</Button>
           <Button type="submit" variant="contained" disabled={isSubmitting}>
-            {isSubmitting ? <CircularProgress size={20} color="inherit" /> : (initialData?.id ? 'Guardar' : (role === 'admin' ? 'Crear Administrador' : 'Crear Conductor'))}
+            {isSubmitting ? <CircularProgress size={20} color="inherit" /> : (data && data.id ? 'Guardar' : (role === 'admin' ? 'Crear Administrador' : 'Crear Conductor'))}
           </Button>
         </Grid>
       </Grid>

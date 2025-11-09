@@ -3,7 +3,7 @@ import axios from 'axios';
 import { userAPI } from '../services/api';
 
 // AuthContext centralizado: aplica token, refresca perfil y expone login/logout
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -32,17 +32,36 @@ export const AuthProvider = ({ children }) => {
     window.location.href = '/login';
   }, [applyToken]);
 
+  // Reemplazamos la implementación para forzar no-cache si existe getProfileNoCache,
+  // y para proteger contra respuestas vacías (no hacer setUser con objeto vacío).
   const fetchAndUpdateUser = useCallback(async () => {
     try {
-      // userAPI usa axios global con base correcta
-      const response = await userAPI.getProfile();
-      const updatedUser = response.data;
+      let response;
+      if (typeof userAPI.getProfileNoCache === 'function') {
+        response = await userAPI.getProfileNoCache();
+      } else {
+        response = await userAPI.getProfile();
+      }
+
+      console.log('DEBUG fetchAndUpdateUser: response.data =', response?.data);
+      const updatedUser = response?.data;
+
+      // Protegemos contra respuestas vacías o inesperadas:
+      if (!updatedUser || (typeof updatedUser === 'object' && Object.keys(updatedUser).length === 0)) {
+        console.warn('fetchAndUpdateUser: perfil obtenido vacío/no válido, no se actualizará el contexto.');
+        return null;
+      }
+
       setUser(updatedUser);
-      localStorage.setItem('rutapay_user', JSON.stringify(updatedUser));
+      try { localStorage.setItem('rutapay_user', JSON.stringify(updatedUser)); } catch (err) {}
       return updatedUser;
     } catch (error) {
-      console.error('Falló la actualización del usuario, cerrando sesión.', error);
-      logout();
+      console.error('Falló la actualización del usuario:', error);
+      // Solo cerrar sesión si la respuesta es 401 (token inválido/expirado)
+      if (error.response?.status === 401) {
+        console.error('Token inválido o expirado. Cerrando sesión.');
+        logout();
+      }
       return null;
     }
   }, [logout]);
@@ -96,6 +115,7 @@ export const AuthProvider = ({ children }) => {
 
   const contextValue = {
     user,
+    setUser,                 // ahora expongo setUser para actualizar localmente sin forzar fetch
     login,
     logout,
     register,
@@ -104,8 +124,10 @@ export const AuthProvider = ({ children }) => {
     applyToken
   };
 
-  return <AuthContext.Provider value={contextValue}>{!loading && children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
 };
 
-// Exporta el hook como NAMED export para mantener consistencia
+// Hook estable para consumir el contexto
 export const useAuth = () => useContext(AuthContext);
+
+export default AuthContext;

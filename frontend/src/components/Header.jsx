@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import IconButton from '@mui/material/IconButton';
@@ -19,6 +19,20 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { USER_ROLES } from '../utils/constants';
 
+// tiny util: si la URL es relativa la convierte a absoluta
+const normalizeAvatarUrl = (url) => {
+  if (!url) return null;
+  try {
+    // si ya es absoluta, URL constructor funciona
+    new URL(url);
+    return url;
+  } catch {
+    // ruta relativa -> convertir a absoluta usando origin
+    if (url.startsWith('/')) return `${window.location.origin}${url}`;
+    return `${window.location.origin}/${url}`;
+  }
+};
+
 const Header = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -34,8 +48,20 @@ const Header = () => {
     navigate(path);
   };
 
-  const tmpAvatar = (typeof window !== 'undefined') ? localStorage.getItem('tmpAvatarUrl') : null;
-  const avatarSrc = user?.avatar || tmpAvatar || null;
+  // estado local para el src del avatar; garantizamos re-render cuando user cambia
+  const [avatarSrc, setAvatarSrc] = useState(null);
+
+  useEffect(() => {
+    // reconstruir avatarSrc cuando cambie user o su id/avatar
+    const tmpKeyPerUser = user?.id ? `tmpAvatarUrl_${user.id}` : null;
+    const tmpPerUser = (typeof window !== 'undefined' && tmpKeyPerUser) ? localStorage.getItem(tmpKeyPerUser) : null;
+    const tmpGlobal = (typeof window !== 'undefined') ? localStorage.getItem('tmpAvatarUrl') : null;
+
+    // prioridad: user.avatar (venido desde backend) -> tmpPerUser -> tmpGlobal -> null
+    const candidate = user?.avatar || tmpPerUser || tmpGlobal || null;
+    setAvatarSrc(normalizeAvatarUrl(candidate));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.avatar]); // sólo depender de id y avatar para mantener estable la reactividad
 
   const handleAvatarClick = (e) => {
     setAnchorEl(e.currentTarget);

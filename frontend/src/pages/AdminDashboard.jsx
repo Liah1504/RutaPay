@@ -8,10 +8,11 @@ import {
 import { Edit as EditIcon, Delete as DeleteIcon, Add as AddIcon, Close as CloseIcon, AttachMoney as AttachMoneyIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
-import { rechargeAPI, authAPI, routeAPI, adminAPI } from '../services/api';
+import { rechargeAPI, routeAPI, adminAPI } from '../services/api';
 import UserForm from '../components/UserForm';
 import RouteForm from '../components/RouteForm';
 import { useNavigate } from 'react-router-dom';
+import axios from '../services/api'; // axios default export
 
 const AdminDashboard = () => {
   const { user, logout } = useAuth();
@@ -153,7 +154,7 @@ const AdminDashboard = () => {
     setEditingUser(null);
   };
 
-  // CORRECCIÓN: crear SOLO CONDUCTORES por defecto. Si estás editando, actualizar.
+  // Crear/Actualizar usuario: mostrar mensaje y cerrar modal tras éxito
   const handleUserSubmit = async (formData) => {
     setIsSubmittingUser(true);
     setUserFormError('');
@@ -162,29 +163,74 @@ const AdminDashboard = () => {
         // Actualizar usuario existente por su id
         await adminAPI.updateUser(editingUser.id, formData);
         setMessage({ text: 'Usuario actualizado exitosamente', type: 'success' });
-        // volver a cargar lista y mantener modal cerrado
-        await fetchAllUsers();
-        await fetchStats();
-      } else {
-        // Nuevo usuario: creamos conductor utilizando el endpoint admin (no registro público)
-        // Forzamos role = 'driver' si no lo trae el form
-        const payload = { ...formData, role: formData.role || 'driver' };
-        const response = await adminAPI.createDriver(payload);
-        // response.data debe contener el conductor creado
-        setMessage({ text: 'Conductor creado exitosamente', type: 'success' });
-
-        // Abrir modal en modo edición con los datos creados para poder completar datos adicionales
-        if (response && response.data) {
-          handleOpenUserModal(response.data);
-        }
-
         // refrescar lista y stats
         await fetchAllUsers();
         await fetchStats();
+        // cerrar modal de edición
+        handleCloseUserModal();
+      } else {
+        // Nuevo usuario: llamar al endpoint correspondiente según role
+        const roleToCreate = formData.role || 'driver';
+        // aseguramos role en payload
+        const payload = { ...formData, role: roleToCreate };
+
+        let response = null;
+        try {
+          if (roleToCreate === 'admin') {
+            // createUser intentará endpoints administrativos y alternativos
+            response = await adminAPI.createUser(payload);
+          } else {
+            response = await adminAPI.createDriver(payload);
+          }
+        } catch (err) {
+          // si createUser lanzó por 404 u otro motivo, se maneja abajo
+          throw err;
+        }
+
+        const created = response?.data;
+        // extraer id y role devuelto del body (varía según backend)
+        const createdId = created?.id || created?.user?.id || created?.userId || created?.data?.id || null;
+        const createdRole = created?.role || created?.user?.role || created?.data?.role || null;
+
+        // Si pedimos admin pero backend devolvió otro role, intentar corregir si tenemos permisos
+        if (roleToCreate === 'admin' && createdRole && createdRole !== 'admin') {
+          // Chequear si tenemos token/authorization configurada
+          const authHeader = axios.defaults.headers.common['Authorization'];
+          if (!authHeader) {
+            setMessage({ text: 'Usuario creado, pero no hay token para asignar role admin automáticamente. Revisa sesión.', type: 'warning' });
+          } else if (createdId) {
+            // Intentar actualizar role vía adminAPI.updateUser
+            try {
+              await adminAPI.updateUser(createdId, { role: 'admin' });
+              // si éxito, informar claramente
+              setMessage({ text: 'Administrador creado y role actualizado correctamente.', type: 'success' });
+            } catch (updateErr) {
+              console.warn('No se pudo actualizar role a admin:', updateErr);
+              setMessage({ text: 'Usuario creado, pero el backend devolvió role distinto (no admin). No se pudo reasignar role automáticamente.', type: 'warning' });
+            }
+          } else {
+            setMessage({ text: 'Usuario creado, pero backend devolvió role distinto y no se obtuvo id para actualizar.', type: 'warning' });
+          }
+        } else {
+          // todo bien o no pedimos admin
+          setMessage({ text: roleToCreate === 'admin' ? 'Administrador creado exitosamente' : 'Conductor creado exitosamente', type: 'success' });
+        }
+
+        // refrescar datos y cerrar modal
+        await fetchAllUsers();
+        await fetchStats();
+        handleCloseUserModal();
       }
     } catch (error) {
       console.error('Error al guardar usuario:', error);
-      setUserFormError(error.response?.data?.error || 'Error al guardar el usuario');
+      const errMsg = error.response?.data?.error || error.response?.data?.message || error.message || 'Error al guardar el usuario';
+      setUserFormError(errMsg);
+      setMessage({ text: errMsg, type: 'error' });
+
+      // Si el error es 404 en createUser, avisar explícitamente que falta endpoint admin
+      if (error?.response?.status === 404) {
+        setUserFormError('Endpoint administrativo no encontrado (404). El backend no tiene POST /admin/users.');
+      }
     } finally {
       setIsSubmittingUser(false);
     }
@@ -401,7 +447,7 @@ const AdminDashboard = () => {
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5" gutterBottom color="primary">👥 Gestión de Usuarios</Typography>
                 <Button variant="contained" color="primary" onClick={() => handleOpenUserModal(null)} startIcon={<AddIcon />}>
-                  Crear Conductor
+                  Crear Usuario
                 </Button>
               </Box>
               {loadingUsers ? (
@@ -473,14 +519,14 @@ const AdminDashboard = () => {
         </Dialog>
 
         <Dialog open={openUserForm} onClose={handleCloseUserModal} maxWidth="sm" fullWidth>
-          <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Conductor'}</DialogTitle>
+          <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}</DialogTitle>
           <DialogContent>
             {userFormError && <Alert severity="error" sx={{ mb: 2 }}>{userFormError}</Alert>}
             <UserForm
               isSubmitting={isSubmittingUser}
               onCancel={handleCloseUserModal}
               onSubmit={handleUserSubmit}
-              initialData={editingUser}
+              initialData={editingUser || undefined}
               requirePassword={!editingUser}
             />
           </DialogContent>
