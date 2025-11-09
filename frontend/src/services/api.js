@@ -1,55 +1,73 @@
 import axios from 'axios';
 
-const API_BASE = 'http://localhost:5002/api';
+// Base URL: usa VITE_API_URL si está en Vite, si no usa localhost
+const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_URL)
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : 'http://localhost:5002/api';
+
+// Usamos el axios GLOBAL para que funcione con axios.defaults que tu AuthContext configura
+axios.defaults.baseURL = API_BASE;
+
+// Si ya hay token guardado por el AuthContext (clave: 'rutapay_token'), aplicarlo al arrancar
+try {
+  const stored = localStorage.getItem('rutapay_token');
+  if (stored) {
+    axios.defaults.headers.common['Authorization'] = `Bearer ${stored}`;
+  }
+} catch (e) {
+  // ignore
+}
 
 export const userAPI = {
-  getProfile: () => axios.get(`${API_BASE}/users/profile`),
-  updateProfile: (userData) => axios.put(`${API_BASE}/users/profile`, userData),
-  updateProfileForm: (formData) => axios.put(`${API_BASE}/users/profile`, formData, {
+  getProfile: () => axios.get('/users/profile'),
+  updateProfile: (userData) => axios.put('/users/profile', userData),
+  updateProfileForm: (formData) => axios.put('/users/profile', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
 };
 
 export const authAPI = {
-  login: (email, password) => axios.post(`${API_BASE}/auth/login`, { email, password }),
-  register: (userData) => axios.post(`${API_BASE}/auth/register`, userData)
+  login: (email, password) => axios.post('/auth/login', { email, password }),
+  register: (userData) => axios.post('/auth/register', userData)
 };
 
 export const tripAPI = {
-  createTrip: (tripData) => axios.post(`${API_BASE}/trips`, tripData),
-  getPassengerTrips: () => axios.get(`${API_BASE}/trips/passenger`),
-  getDriverTrips: () => axios.get(`${API_BASE}/trips/driver`),
-  updateStatus: (data) => axios.put(`${API_BASE}/trips/status`, data)
+  createTrip: (tripData) => axios.post('/trips', tripData),
+  getPassengerTrips: () => axios.get('/trips/passenger'),
+  getDriverTrips: () => axios.get('/trips/driver'),
+  updateStatus: (data) => axios.put('/trips/status', data)
 };
 
 export const rechargeAPI = {
-  create: (rechargeData) => axios.post(`${API_BASE}/recharges`, rechargeData),
-  getPending: () => axios.get(`${API_BASE}/recharges/pending`),
-  confirm: (id) => axios.put(`${API_BASE}/recharges/${id}/confirm`)
+  create: (rechargeData) => axios.post('/recharges', rechargeData),
+  getPending: () => axios.get('/recharges/pending'),
+  confirm: (id) => axios.put(`/recharges/${id}/confirm`)
 };
 
 export const routeAPI = {
-  getAll: () => axios.get(`${API_BASE}/routes`),
-  create: (routeData) => axios.post(`${API_BASE}/routes`, routeData),
-  update: (id, routeData) => axios.put(`${API_BASE}/routes/${id}`, routeData)
+  getAll: () => axios.get('/routes'),
+  create: (routeData) => axios.post('/routes', routeData),
+  update: (id, routeData) => axios.put(`/routes/${id}`, routeData)
 };
 
 export const driverAPI = {
-  getProfile: () => axios.get(`${API_BASE}/drivers/profile`),
-  getPayments: () => axios.get(`${API_BASE}/drivers/payments`),
-  getPaymentsSummary: (date) => axios.get(`${API_BASE}/drivers/payments/summary`, { params: { date } }),
-  getNotifications: (limit = 5) => axios.get(`${API_BASE}/drivers/notifications`, { params: { limit } }),
-  updateProfile: (data) => axios.put(`${API_BASE}/drivers/profile`, data)
+  getProfile: () => axios.get('/drivers/profile'),
+  getPayments: () => axios.get('/drivers/payments'),
+  getPaymentsSummary: (date) => axios.get('/drivers/payments/summary', { params: { date } }),
+  getNotifications: (limit = 5) => axios.get('/drivers/notifications', { params: { limit } }),
+  updateProfile: (data) => axios.put('/drivers/profile', data)
 };
 
 export const adminAPI = {
-  getStats: () => axios.get(`${API_BASE}/admin/stats`),
-  getAllUsers: () => axios.get(`${API_BASE}/admin/users`),
-  updateUser: (id, userData) => axios.put(`${API_BASE}/admin/users/${id}`, userData),
-  deleteUser: (id) => axios.delete(`${API_BASE}/admin/users/${id}`),
-  createDriver: (driverData) => axios.post(`${API_BASE}/admin/drivers`, driverData)
+  getStats: () => axios.get('/admin/stats'),
+  getAllUsers: () => axios.get('/admin/users'),
+  updateUser: (id, userData) => axios.put(`/admin/users/${id}`, userData),
+  deleteUser: (id) => axios.delete(`/admin/users/${id}`),
+  createDriver: (driverData) => axios.post('/admin/drivers', driverData)
 };
 
 export const paymentAPI = {
-  executePayment: (paymentData) => axios.post(`${API_BASE}/payment/pay`, paymentData)
+  executePayment: (paymentData) => axios.post('/payment/pay', paymentData)
 };
+
+export default axios;

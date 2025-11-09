@@ -8,30 +8,30 @@ import {
 import { Edit as EditIcon, Delete as DeleteIcon, Add as AddIcon, Close as CloseIcon, AttachMoney as AttachMoneyIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
-import { rechargeAPI, authAPI, routeAPI, adminAPI } from '../services/api'; 
-import UserForm from '../components/UserForm'; 
-import RouteForm from '../components/RouteForm'; 
+import { rechargeAPI, authAPI, routeAPI, adminAPI } from '../services/api';
+import UserForm from '../components/UserForm';
+import RouteForm from '../components/RouteForm';
 import { useNavigate } from 'react-router-dom';
 
 const AdminDashboard = () => {
-  const { user, logout } = useAuth(); 
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   // Estadísticas
-  const [stats, setStats] = useState({ 
-    totalUsers: 0, 
+  const [stats, setStats] = useState({
+    totalUsers: 0,
     totalDrivers: 0,
     totalTrips: 0,
     activeTrips: 0,
-    totalRevenue: '0.00' 
+    totalRevenue: '0.00'
   });
   const [loadingStats, setLoadingStats] = useState(true);
 
   // Recargas
   const [pendingRecharges, setPendingRecharges] = useState([]);
   const [loadingRecharges, setLoadingRecharges] = useState(true);
-  const [loadingRechargeAction, setLoadingRechargeAction] = useState(null); 
-  
+  const [loadingRechargeAction, setLoadingRechargeAction] = useState(null);
+
   // Rutas
   const [routes, setRoutes] = useState([]);
   const [loadingRoutes, setLoadingRoutes] = useState(true);
@@ -53,10 +53,10 @@ const AdminDashboard = () => {
 
   // Formato de moneda
   const formatCurrency = (amount) => {
-      const num = parseFloat(amount);
-      if (isNaN(num)) return 'Bs 0,00';
-      const formatted = num.toFixed(2).replace('.', ',');
-      return `Bs ${formatted}`; 
+    const num = parseFloat(amount);
+    if (isNaN(num)) return 'Bs 0,00';
+    const formatted = num.toFixed(2).replace('.', ',');
+    return `Bs ${formatted}`;
   };
 
   // Carga de estadísticas
@@ -72,7 +72,7 @@ const AdminDashboard = () => {
       setLoadingStats(false);
     }
   }, []);
-  
+
   // Carga recargas
   const fetchPendingRecharges = useCallback(async () => {
     setLoadingRecharges(true);
@@ -91,7 +91,7 @@ const AdminDashboard = () => {
   const fetchRoutes = useCallback(async () => {
     setLoadingRoutes(true);
     try {
-      const response = await routeAPI.getAll(); 
+      const response = await routeAPI.getAll();
       setRoutes(response.data);
     } catch (error) {
       setMessage({ text: 'Error al cargar las rutas', type: 'error' });
@@ -119,13 +119,13 @@ const AdminDashboard = () => {
   useEffect(() => {
     fetchAllUsers();
     fetchRoutes();
-    fetchStats(); 
-    fetchPendingRecharges(); 
+    fetchStats();
+    fetchPendingRecharges();
     const pollRechargesInterval = setInterval(() => {
-        fetchPendingRecharges();
-    }, 15000); 
-    return () => clearInterval(pollRechargesInterval);   
-  }, [fetchAllUsers, fetchRoutes, fetchPendingRecharges, fetchStats]); 
+      fetchPendingRecharges();
+    }, 15000);
+    return () => clearInterval(pollRechargesInterval);
+  }, [fetchAllUsers, fetchRoutes, fetchPendingRecharges, fetchStats]);
 
   // Handlers recargas
   const handleConfirmRecharge = async (rechargeId) => {
@@ -134,17 +134,17 @@ const AdminDashboard = () => {
       await rechargeAPI.confirm(rechargeId);
       setMessage({ text: 'Recarga aprobada y saldo sumado exitosamente.', type: 'success' });
       setPendingRecharges(prev => prev.filter(r => r.id !== rechargeId));
-      fetchStats(); 
+      fetchStats();
     } catch (error) {
       setMessage({ text: error.response?.data?.error || 'Error al aprobar la recarga. Verifique la conexión.', type: 'error' });
     } finally {
       setLoadingRechargeAction(null);
     }
   };
-  
+
   // Handlers usuarios
   const handleOpenUserModal = (user = null) => {
-    setEditingUser(user);
+    setEditingUser(user); // pasar null o el usuario, sin crear objetos nuevos
     setUserFormError('');
     setOpenUserForm(true);
   };
@@ -152,39 +152,57 @@ const AdminDashboard = () => {
     setOpenUserForm(false);
     setEditingUser(null);
   };
+
+  // CORRECCIÓN: crear SOLO CONDUCTORES por defecto. Si estás editando, actualizar.
   const handleUserSubmit = async (formData) => {
     setIsSubmittingUser(true);
     setUserFormError('');
     try {
-      if (editingUser) {
+      if (editingUser && editingUser.id) {
+        // Actualizar usuario existente por su id
         await adminAPI.updateUser(editingUser.id, formData);
         setMessage({ text: 'Usuario actualizado exitosamente', type: 'success' });
+        // volver a cargar lista y mantener modal cerrado
+        await fetchAllUsers();
+        await fetchStats();
       } else {
-        await authAPI.register(formData); 
-        setMessage({ text: 'Usuario creado exitosamente', type: 'success' });
+        // Nuevo usuario: creamos conductor utilizando el endpoint admin (no registro público)
+        // Forzamos role = 'driver' si no lo trae el form
+        const payload = { ...formData, role: formData.role || 'driver' };
+        const response = await adminAPI.createDriver(payload);
+        // response.data debe contener el conductor creado
+        setMessage({ text: 'Conductor creado exitosamente', type: 'success' });
+
+        // Abrir modal en modo edición con los datos creados para poder completar datos adicionales
+        if (response && response.data) {
+          handleOpenUserModal(response.data);
+        }
+
+        // refrescar lista y stats
+        await fetchAllUsers();
+        await fetchStats();
       }
-      handleCloseUserModal();
-      fetchAllUsers(); 
-      fetchStats(); // Actualizamos las estadísticas
     } catch (error) {
+      console.error('Error al guardar usuario:', error);
       setUserFormError(error.response?.data?.error || 'Error al guardar el usuario');
     } finally {
       setIsSubmittingUser(false);
     }
   };
+
   const handleDeleteUser = async (userId, userName) => {
     if (window.confirm(`¿Estás seguro de ELIMINAR al usuario ${userName}? Esta acción es irreversible.`)) {
       try {
         await adminAPI.deleteUser(userId);
         setMessage({ text: `Usuario ${userName} eliminado.`, type: 'success' });
-        fetchAllUsers(); 
-        fetchStats(); // Actualizamos las estadísticas
+        fetchAllUsers();
+        fetchStats();
       } catch (error) {
         setMessage({ text: error.response?.data?.error || 'Error al eliminar usuario', type: 'error' });
       }
     }
   };
-  
+
   // Handlers rutas
   const handleOpenRouteModal = (route = null) => {
     setEditingRoute(route);
@@ -207,8 +225,8 @@ const AdminDashboard = () => {
         setMessage({ text: 'Ruta creada exitosamente', type: 'success' });
       }
       handleCloseRouteModal();
-      fetchRoutes(); 
-      fetchStats(); // Actualizamos las estadísticas
+      fetchRoutes();
+      fetchStats();
     } catch (error) {
       setRouteFormError(error.response?.data?.error || 'Error al guardar la ruta');
     } finally {
@@ -221,8 +239,8 @@ const AdminDashboard = () => {
       try {
         await routeAPI.update(routeId, { is_active: !isActive });
         setMessage({ text: `Ruta ${actionText} exitosamente.`, type: 'success' });
-        fetchRoutes(); 
-        fetchStats(); // Actualizamos las estadísticas
+        fetchRoutes();
+        fetchStats();
       } catch (error) {
         setMessage({ text: error.response?.data?.error || `Error al ${actionText} la ruta`, type: 'error' });
       }
@@ -233,7 +251,6 @@ const AdminDashboard = () => {
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <Header />
       <Container maxWidth="xl" sx={{ pt: 4, pb: 4 }}>
-        {/* === ELIMINADO el botón de cerrar sesión en la top bar === */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'text.primary' }}>
             👨‍💼 Panel de Administración
@@ -241,7 +258,6 @@ const AdminDashboard = () => {
         </Box>
         {message.text && <Alert severity={message.type} sx={{ mb: 2 }} onClose={() => setMessage({ text: '', type: 'info' })}>{message.text}</Alert>}
         <Grid container spacing={3}>
-          {/* --- SECCIÓN RECARGAS PENDIENTES --- */}
           <Grid item xs={12} md={7}>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Typography variant="h5" gutterBottom color="primary">💰 Recargas de Saldo Pendientes ({pendingRecharges.length})</Typography>
@@ -271,7 +287,7 @@ const AdminDashboard = () => {
                           <TableCell align="right">
                             <Button
                               variant="contained"
-                              color="success" 
+                              color="success"
                               size="small"
                               disabled={loadingRechargeAction === r.id}
                               onClick={() => handleConfirmRecharge(r.id)}
@@ -287,15 +303,15 @@ const AdminDashboard = () => {
               )}
             </Paper>
           </Grid>
-          {/* --- SECCIÓN GESTIÓN DE RUTAS --- */}
+
           <Grid item xs={12} md={5}>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5" color="primary">🛣️ Gestión de Rutas</Typography>
-                <Button 
-                  variant="contained" 
-                  color="primary" 
-                  startIcon={<AddIcon />} 
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<AddIcon />}
                   onClick={() => handleOpenRouteModal(null)}
                 >
                   Crear Ruta
@@ -322,10 +338,10 @@ const AdminDashboard = () => {
                           <TableCell>{r.name}</TableCell>
                           <TableCell>{parseFloat(r.fare).toFixed(2)}</TableCell>
                           <TableCell>
-                            <Chip 
-                                label={r.is_active ? 'Activa' : 'Inactiva'} 
-                                color={r.is_active ? 'success' : 'error'} 
-                                size="small"
+                            <Chip
+                              label={r.is_active ? 'Activa' : 'Inactiva'}
+                              color={r.is_active ? 'success' : 'error'}
+                              size="small"
                             />
                           </TableCell>
                           <TableCell align="right">
@@ -335,8 +351,8 @@ const AdminDashboard = () => {
                               </IconButton>
                             </Tooltip>
                             <Tooltip title={r.is_active ? "Desactivar Ruta" : "Activar Ruta"}>
-                              <IconButton 
-                                size="small" 
+                              <IconButton
+                                size="small"
                                 onClick={() => handleDeleteRoute(r.id, r.is_active)}
                               >
                                 {r.is_active ? <CloseIcon fontSize="small" color="error" /> : <AddIcon fontSize="small" color="success" />}
@@ -351,42 +367,41 @@ const AdminDashboard = () => {
               )}
             </Paper>
           </Grid>
-          {/* --- SECCIÓN INGRESOS Y ESTADÍSTICAS --- */}
+
           {loadingStats ? (
             <Grid item xs={12}><Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box></Grid>
           ) : (
             <>
-              {/* INGRESOS TOTALES */}
               <Grid item xs={12}>
-                <Card sx={{bgcolor: '#4caf50', display: 'flex', alignItems: 'center', p: 2, height: '100px'}}> 
-                    <CardContent sx={{pb: '16px !important'}}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                            <AttachMoneyIcon sx={{ color: 'white', mr: 1, fontSize: '1.8rem' }} />
-                            <Typography variant="body2" color="white" sx={{ fontWeight: 'bold' }}>INGRESOS TOTALES</Typography>
-                        </Box>
-                        <Typography variant="h3" sx={{fontWeight: 700, color: 'white'}}>{formatCurrency(stats.totalRevenue)}</Typography>
-                    </CardContent>
+                <Card sx={{ bgcolor: '#4caf50', display: 'flex', alignItems: 'center', p: 2, height: '100px' }}>
+                  <CardContent sx={{ pb: '16px !important' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                      <AttachMoneyIcon sx={{ color: 'white', mr: 1, fontSize: '1.8rem' }} />
+                      <Typography variant="body2" color="white" sx={{ fontWeight: 'bold' }}>INGRESOS TOTALES</Typography>
+                    </Box>
+                    <Typography variant="h3" sx={{ fontWeight: 700, color: 'white' }}>{formatCurrency(stats.totalRevenue)}</Typography>
+                  </CardContent>
                 </Card>
               </Grid>
-              {/* CONTADORES */}
-              <Grid item xs={12}> 
-                  <Grid container spacing={3}> 
-                      <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Usuarios</Typography><Typography variant="h4">{stats.totalUsers}</Typography></CardContent></Card></Grid>
-                      <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Conductores</Typography><Typography variant="h4">{stats.totalDrivers}</Typography></CardContent></Card></Grid>
-                      <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Viajes</Typography><Typography variant="h4">{stats.totalTrips}</Typography></CardContent></Card></Grid>
-                      <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Viajes Activos</Typography><Typography variant="h4">{stats.activeTrips}</Typography></CardContent></Card></Grid>
-                      <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Rutas Activas</Typography><Typography variant="h4">{routes.filter(r => r.is_active).length}</Typography></CardContent></Card></Grid>
-                  </Grid>
+
+              <Grid item xs={12}>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Usuarios</Typography><Typography variant="h4">{stats.totalUsers}</Typography></CardContent></Card></Grid>
+                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Conductores</Typography><Typography variant="h4">{stats.totalDrivers}</Typography></CardContent></Card></Grid>
+                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Viajes</Typography><Typography variant="h4">{stats.totalTrips}</Typography></CardContent></Card></Grid>
+                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Viajes Activos</Typography><Typography variant="h4">{stats.activeTrips}</Typography></CardContent></Card></Grid>
+                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Rutas Activas</Typography><Typography variant="h4">{routes.filter(r => r.is_active).length}</Typography></CardContent></Card></Grid>
+                </Grid>
               </Grid>
             </>
           )}
-          {/* --- SECCIÓN GESTIÓN DE USUARIOS --- */}
+
           <Grid item xs={12}>
             <Paper sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5" gutterBottom color="primary">👥 Gestión de Usuarios</Typography>
                 <Button variant="contained" color="primary" onClick={() => handleOpenUserModal(null)} startIcon={<AddIcon />}>
-                  Crear Usuario
+                  Crear Conductor
                 </Button>
               </Box>
               {loadingUsers ? (
@@ -413,10 +428,10 @@ const AdminDashboard = () => {
                           <TableCell>{u.name}</TableCell>
                           <TableCell>{u.email}</TableCell>
                           <TableCell>
-                            <Chip 
-                                label={u.role.toUpperCase()} 
-                                color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'} 
-                                size="small"
+                            <Chip
+                              label={u.role.toUpperCase()}
+                              color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
+                              size="small"
                             />
                           </TableCell>
                           <TableCell>{parseFloat(u.balance).toFixed(2)}</TableCell>
@@ -443,6 +458,7 @@ const AdminDashboard = () => {
             </Paper>
           </Grid>
         </Grid>
+
         <Dialog open={openRouteForm} onClose={handleCloseRouteModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingRoute ? 'Editar Ruta' : 'Crear Nueva Ruta'}</DialogTitle>
           <DialogContent>
@@ -451,20 +467,21 @@ const AdminDashboard = () => {
               isSubmitting={isSubmittingRoute}
               onCancel={handleCloseRouteModal}
               onSubmit={handleRouteSubmit}
-              initialData={editingRoute || {}} 
+              initialData={editingRoute || {}}
             />
           </DialogContent>
         </Dialog>
+
         <Dialog open={openUserForm} onClose={handleCloseUserModal} maxWidth="sm" fullWidth>
-          <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}</DialogTitle>
+          <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Conductor'}</DialogTitle>
           <DialogContent>
             {userFormError && <Alert severity="error" sx={{ mb: 2 }}>{userFormError}</Alert>}
             <UserForm
               isSubmitting={isSubmittingUser}
               onCancel={handleCloseUserModal}
               onSubmit={handleUserSubmit}
-              initialData={editingUser || {}}
-              requirePassword={!editingUser} 
+              initialData={editingUser}
+              requirePassword={!editingUser}
             />
           </DialogContent>
         </Dialog>

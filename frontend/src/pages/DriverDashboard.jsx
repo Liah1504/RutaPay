@@ -29,18 +29,28 @@ const DriverDashboard = () => {
   const [notifMessage, setNotifMessage] = useState('');
   const lastNotifIdRef = useRef(null);
 
+  // Devuelve YYYY-MM-DD en la fecha local del navegador (hoisted function)
+  function getLocalISODate(d = new Date()) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
   function getLastDays() {
     const days = [];
     for (let i = 0; i < 7; i++) {
       const dt = new Date();
       dt.setDate(dt.getDate() - i);
       const label = dt.toLocaleDateString('es-VE', { day: 'numeric', month: 'short' });
-      days.push({ value: dt.toISOString().slice(0, 10), label });
+      days.push({ value: getLocalISODate(new Date(dt)), label });
     }
     return days;
   }
   const lastDays = getLastDays();
-  const todayString = new Date().toISOString().slice(0,10);
+
+  // Fecha de hoy en la zona local (no en UTC)
+  const todayString = getLocalISODate();
 
   const getDateForSelectedDay = (sel) => (sel === 'hoy' ? todayString : sel);
 
@@ -58,6 +68,12 @@ const DriverDashboard = () => {
 
         if (!mounted) return;
 
+        // Logs para depuración: revisar qué trae cada response
+        console.log('profileRes:', profileRes);
+        console.log('paymentsRes:', paymentsRes);
+        console.log('summaryRes:', summaryRes);
+        console.log('notifRes:', notifRes);
+
         setProfile(profileRes.data || null);
         setRouteName((profileRes.data && (profileRes.data.route_name || '')) || '');
 
@@ -65,18 +81,32 @@ const DriverDashboard = () => {
         setHistoryPayments(pagos);
         setLoadingPayments(false);
 
-        const summaryToday = summaryRes.data || {};
+        const rawSummary = summaryRes && summaryRes.data ? summaryRes.data : {};
+        const summaryBody = rawSummary.data ? rawSummary.data : rawSummary;
+        console.log('summaryBody (normalizado):', summaryBody);
+
+        // Normalizar valores numéricos
+        const passengersCount = Number(summaryBody.passengers_count) || 0;
+        const totalRecaudado = parseFloat(summaryBody.total) || 0;
+
         setTodaySummary({
-          passengers: summaryToday.passengers_count || 0,
-          recaudado: summaryToday.total || 0,
-          ganancias: summaryToday.total || 0
+          passengers: passengersCount,
+          recaudado: totalRecaudado,
+          ganancias: totalRecaudado
         });
         setLoadingTodaySummary(false);
 
         const dateForGraph = getDateForSelectedDay(selectedDay);
         try {
           const graphRes = await driverAPI.getPaymentsSummary(dateForGraph);
-          const gd = Array.isArray(graphRes.data.totals) ? graphRes.data.totals : [];
+          // graphRes.data.totals esperado como array: [{ route_id, route_name, total }, ...]
+          const rawTotals = Array.isArray(graphRes?.data?.totals) ? graphRes.data.totals : (Array.isArray(graphRes?.data) ? graphRes.data : []);
+          // Normalizar: total como número y route_name existiendo
+          const gd = rawTotals.map(item => ({
+            ...item,
+            total: Number(item.total) || 0,
+            route_name: item.route_name || (item.route_id ? String(item.route_id) : '')
+          }));
           if (mounted) {
             setGraphData(gd);
             setLoadingGraph(false);
@@ -104,15 +134,18 @@ const DriverDashboard = () => {
             ]);
             if (!mounted) return;
 
-            const freshSummary = freshSummaryRes.data || {};
+            const rawFresh = freshSummaryRes && freshSummaryRes.data ? freshSummaryRes.data : {};
+            const freshBody = rawFresh.data ? rawFresh.data : rawFresh;
+            const freshPassengers = Number(freshBody.passengers_count) || 0;
+            const freshTotal = parseFloat(freshBody.total) || 0;
             setTodaySummary({
-              passengers: freshSummary.passengers_count || 0,
-              recaudado: freshSummary.total || 0,
-              ganancias: freshSummary.total || 0
+              passengers: freshPassengers,
+              recaudado: freshTotal,
+              ganancias: freshTotal
             });
 
             if (selectedDay === 'hoy') {
-              setGraphData(Array.isArray(freshSummary.totals) ? freshSummary.totals : []);
+              setGraphData(Array.isArray(freshBody.totals) ? freshBody.totals.map(item => ({ ...item, total: Number(item.total) || 0 })) : []);
             }
 
             const freshPayments = Array.isArray(freshPaymentsRes.data) ? freshPaymentsRes.data : [];
@@ -223,17 +256,23 @@ const DriverDashboard = () => {
               {lastDays.map(d => <MenuItem key={d.value} value={d.value}>{d.label}</MenuItem>)}
             </Select>
           </FormControl>
-          <Box sx={{ height: 320, background: 'white', borderRadius: 2 }}>
+
+          {/* Contenedor del gráfico: altura mayor para que entren las etiquetas y puntos */}
+          <Box sx={{ height: 380, minHeight: 360, background: 'white', borderRadius: 2, overflow: 'hidden', p: 2 }}>
             {loadingGraph ? (
               <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}><CircularProgress /></Box>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={graphData}>
+                {/* Ajuste de margin bottom para dejar sitio a etiquetas rotadas */}
+                <LineChart data={graphData} margin={{ top: 20, right: 30, left: 20, bottom: 80 }}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="route_name" />
+                  {/* interval={0} fuerza a mostrar todas las etiquetas */}
+                  {/* height y angle ayudan a reservar espacio para etiquetas largas */}
+                  <XAxis dataKey="route_name" interval={0} height={70} tick={{ fontSize: 12 }} angle={-25} textAnchor="end" />
                   <YAxis />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="total" stroke="#fa4e48" strokeWidth={3} />
+                  <Tooltip formatter={(value) => [Number(value).toFixed(2), 'Recaudado']} />
+                  {/* dot visible y ligeramente mayor */}
+                  <Line type="monotone" dataKey="total" stroke="#fa4e48" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                 </LineChart>
               </ResponsiveContainer>
             )}

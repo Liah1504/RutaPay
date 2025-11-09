@@ -34,7 +34,7 @@ export const AuthProvider = ({ children }) => {
 
   const fetchAndUpdateUser = useCallback(async () => {
     try {
-      // userAPI should use absolute paths or same base; it is used here for convenience
+      // userAPI usa axios global con base correcta
       const response = await userAPI.getProfile();
       const updatedUser = response.data;
       setUser(updatedUser);
@@ -107,6 +107,5 @@ export const AuthProvider = ({ children }) => {
   return <AuthContext.Provider value={contextValue}>{!loading && children}</AuthContext.Provider>;
 };
 
+// Exporta el hook como NAMED export para mantener consistencia
 export const useAuth = () => useContext(AuthContext);
-export default AuthProvider;
-
