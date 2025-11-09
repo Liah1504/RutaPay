@@ -58,6 +58,11 @@ export const driverAPI = {
   updateProfile: (data) => axios.put('/drivers/profile', data)
 };
 
+export const notificationsAPI = {
+  getLatestForDriver: (limit = 10) => axios.get('/drivers/notifications', { params: { limit } }),
+  markAsRead: (id) => axios.put(`/notifications/${id}/read`)
+};
+
 export const adminAPI = {
   getStats: () => axios.get('/admin/stats'),
   getAllUsers: () => axios.get('/admin/users'),
@@ -65,37 +70,21 @@ export const adminAPI = {
   deleteUser: (id) => axios.delete(`/admin/users/${id}`),
   createDriver: (driverData) => axios.post('/admin/drivers', driverData),
 
-  // createUser robusto: intentará endpoints administrativos y, si no existen,
-  // enviará role en el body a endpoints alternativos. Devuelve la respuesta del endpoint exitoso.
   createUser: async (userData) => {
-    // Asegurar que role esté en el payload (por si el caller no lo pone)
     const payloadWithRole = { ...userData, role: userData.role || 'admin' };
-    // 1) Intentar endpoint admin clásico (requiere permisos/admin)
     try {
       return await axios.post('/admin/users', payloadWithRole);
     } catch (err) {
-      if (!err.response || err.response.status !== 404) {
-        throw err; // error distinto a 404: devolver para manejar
-      }
-      // si 404 --> probar siguiente
+      if (!err.response || err.response.status !== 404) throw err;
     }
-
-    // 2) Intentar endpoint genérico /users (algunos backends tienen /users para creación admin mediante token)
     try {
       return await axios.post('/users', payloadWithRole);
     } catch (err) {
-      if (!err.response || err.response.status !== 404) {
-        throw err;
-      }
+      if (!err.response || err.response.status !== 404) throw err;
     }
-
-    // 3) Intentar endpoint público de registro /auth/register pero enviando role
-    //    Nota: muchos backends ignoran role en registro público; si esto ocurre, frontend detectará
-    //    que el usuario creado no tiene role=admin y avisará.
     try {
       return await axios.post('/auth/register', payloadWithRole);
     } catch (err) {
-      // ninguno funcionó; relanzar el último error con info
       throw err;
     }
   },
