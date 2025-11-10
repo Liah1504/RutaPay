@@ -5,7 +5,13 @@ import {
   Button, CircularProgress, Alert, Dialog, DialogTitle, DialogContent,
   IconButton, Tooltip, Card, CardContent
 } from '@mui/material';
-import { Edit as EditIcon, Delete as DeleteIcon, Add as AddIcon, Close as CloseIcon, AttachMoney as AttachMoneyIcon } from '@mui/icons-material';
+import {
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Add as AddIcon,
+  Close as CloseIcon,
+  AttachMoney as AttachMoneyIcon
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
 import { rechargeAPI, routeAPI, adminAPI } from '../services/api';
@@ -95,8 +101,10 @@ const AdminDashboard = () => {
       const response = await routeAPI.getAll();
       setRoutes(response.data);
     } catch (error) {
-      setMessage({ text: 'Error al cargar las rutas', type: 'error' });
-      console.error(error);
+      console.error('Error fetching routes:', error);
+      // mostrar mensaje con posible detalle
+      const serverMsg = error?.response?.data?.message || error?.response?.data?.error;
+      setMessage({ text: serverMsg || 'Error al cargar las rutas', type: 'error' });
     } finally {
       setLoadingRoutes(false);
     }
@@ -274,21 +282,69 @@ const AdminDashboard = () => {
       fetchRoutes();
       fetchStats();
     } catch (error) {
-      setRouteFormError(error.response?.data?.error || 'Error al guardar la ruta');
+      console.error('Error al guardar ruta:', error);
+      setRouteFormError(error.response?.data?.error || error.response?.data?.message || 'Error al guardar la ruta');
+      setMessage({ text: error.response?.data?.error || 'Error al guardar la ruta', type: 'error' });
     } finally {
       setIsSubmittingRoute(false);
     }
   };
+
+  // Robust delete / toggle handler for routes
   const handleDeleteRoute = async (routeId, isActive) => {
     const actionText = isActive ? 'desactivar' : 'activar';
-    if (window.confirm(`¿Seguro que quieres ${actionText} esta ruta?`)) {
+    if (!window.confirm(`¿Seguro que quieres ${actionText} esta ruta?`)) return;
+
+    // Buscar objeto de ruta localmente (para fallback PUT)
+    const routeObj = routes.find(r => String(r.id) === String(routeId));
+    try {
+      // Intentar DELETE primero
+      const deleteRes = await axios.delete(`/routes/${routeId}`);
+      // Si el servidor responde ok, refrescar y mostrar mensaje
+      setMessage({ text: `Ruta eliminada correctamente.`, type: 'success' });
+      await fetchRoutes();
+      await fetchStats();
+      return;
+    } catch (deleteErr) {
+      // DELETE falló: mostrar info en consola y seguir con fallback
+      const delStatus = deleteErr?.response?.status;
+      const delBody = deleteErr?.response?.data;
+      console.warn('DELETE /routes/:id fallo', delStatus, delBody);
+
+      // Si no tenemos el objeto completo, no podemos hacer PUT seguro
+      if (!routeObj) {
+        setMessage({ text: `Error al ${actionText} la ruta: no se encontró la ruta localmente.`, type: 'error' });
+        return;
+      }
+
+      // Construir payload completo para PUT fallback
+      const payload = {
+        ...routeObj,
+        // alternar is_active/active para mayor compatibilidad
+        is_active: !isActive,
+        active: !isActive,
+      };
+
       try {
-        await routeAPI.update(routeId, { is_active: !isActive });
-        setMessage({ text: `Ruta ${actionText} exitosamente.`, type: 'success' });
-        fetchRoutes();
-        fetchStats();
-      } catch (error) {
-        setMessage({ text: error.response?.data?.error || `Error al ${actionText} la ruta`, type: 'error' });
+        await routeAPI.update(routeId, payload);
+        setMessage({ text: `Ruta ${actionText} correctamente.`, type: 'success' });
+        await fetchRoutes();
+        await fetchStats();
+      } catch (updateErr) {
+        // Mostrar error detallado del backend para depuración
+        const status = updateErr?.response?.status;
+        const body = updateErr?.response?.data;
+        console.error('Error updating route fallback:', status, body, updateErr);
+
+        // Construir mensaje legible para UI
+        let serverMsg = null;
+        if (body) {
+          if (typeof body === 'string') serverMsg = body;
+          else if (body.error) serverMsg = body.error;
+          else if (body.message) serverMsg = body.message;
+          else serverMsg = JSON.stringify(body);
+        }
+        setMessage({ text: serverMsg ? `Error al ${actionText} la ruta: ${serverMsg}` : `Error al ${actionText} la ruta`, type: 'error' });
       }
     }
   };
@@ -302,7 +358,9 @@ const AdminDashboard = () => {
             👨‍💼 Panel de Administración
           </Typography>
         </Box>
+
         {message.text && <Alert severity={message.type} sx={{ mb: 2 }} onClose={() => setMessage({ text: '', type: 'info' })}>{message.text}</Alert>}
+
         <Grid container spacing={3}>
           <Grid item xs={12} md={7}>
             <Paper sx={{ p: 3, height: '100%' }}>
