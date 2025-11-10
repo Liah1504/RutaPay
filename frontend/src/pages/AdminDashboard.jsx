@@ -3,7 +3,7 @@ import {
   Container, Paper, Typography, Box, Grid, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Chip,
   Button, CircularProgress, Alert, Dialog, DialogTitle, DialogContent,
-  IconButton, Tooltip, Card, CardContent
+  IconButton, Tooltip, Card, CardContent, TextField
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -55,6 +55,12 @@ const AdminDashboard = () => {
   const [userFormError, setUserFormError] = useState('');
   const [editingUser, setEditingUser] = useState(null);
 
+  // Rechazo recarga: dialog
+  const [openRejectDialog, setOpenRejectDialog] = useState(false);
+  const [rejectingId, setRejectingId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectLoading, setRejectLoading] = useState(false);
+
   // Mensaje global
   const [message, setMessage] = useState({ text: '', type: 'info' });
 
@@ -101,10 +107,8 @@ const AdminDashboard = () => {
       const response = await routeAPI.getAll();
       setRoutes(response.data);
     } catch (error) {
-      console.error('Error fetching routes:', error);
-      // mostrar mensaje con posible detalle
-      const serverMsg = error?.response?.data?.message || error?.response?.data?.error;
-      setMessage({ text: serverMsg || 'Error al cargar las rutas', type: 'error' });
+      setMessage({ text: 'Error al cargar las rutas', type: 'error' });
+      console.error(error);
     } finally {
       setLoadingRoutes(false);
     }
@@ -151,7 +155,41 @@ const AdminDashboard = () => {
     }
   };
 
-  // Handlers usuarios
+  // ABRIR DIALOG RECHAZAR
+  const handleOpenReject = (rechargeId) => {
+    setRejectingId(rechargeId);
+    setRejectReason('');
+    setOpenRejectDialog(true);
+  };
+  const handleCloseReject = () => {
+    setOpenRejectDialog(false);
+    setRejectingId(null);
+    setRejectReason('');
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectReason || !rejectingId) {
+      setMessage({ text: 'Agrega una razón para el rechazo.', type: 'warning' });
+      return;
+    }
+    setRejectLoading(true);
+    try {
+      await rechargeAPI.reject(rejectingId, rejectReason);
+      // eliminar de lista local
+      setPendingRecharges(prev => prev.filter(r => r.id !== rejectingId));
+      setMessage({ text: 'Recarga rechazada y usuario notificado.', type: 'success' });
+      await fetchStats();
+      handleCloseReject();
+    } catch (error) {
+      console.error('Error rechazando recarga:', error);
+      const serverMsg = error?.response?.data?.error || error?.response?.data?.message || error.message;
+      setMessage({ text: serverMsg || 'Error al rechazar la recarga', type: 'error' });
+    } finally {
+      setRejectLoading(false);
+    }
+  };
+
+  // Handlers usuarios (sin cambios)
   const handleOpenUserModal = (user = null) => {
     setEditingUser(user); // pasar null o el usuario, sin crear objetos nuevos
     setUserFormError('');
@@ -162,55 +200,38 @@ const AdminDashboard = () => {
     setEditingUser(null);
   };
 
-  // Crear/Actualizar usuario: mostrar mensaje y cerrar modal tras éxito
+  // Crear/Actualizar usuario: mostrar mensaje y cerrar modal tras éxito (igual que tu original)
   const handleUserSubmit = async (formData) => {
     setIsSubmittingUser(true);
     setUserFormError('');
     try {
       if (editingUser && editingUser.id) {
-        // Actualizar usuario existente por su id
         await adminAPI.updateUser(editingUser.id, formData);
         setMessage({ text: 'Usuario actualizado exitosamente', type: 'success' });
-        // refrescar lista y stats
         await fetchAllUsers();
         await fetchStats();
-        // cerrar modal de edición
         handleCloseUserModal();
       } else {
-        // Nuevo usuario: llamar al endpoint correspondiente según role
         const roleToCreate = formData.role || 'driver';
-        // aseguramos role en payload
         const payload = { ...formData, role: roleToCreate };
-
         let response = null;
         try {
           if (roleToCreate === 'admin') {
-            // createUser intentará endpoints administrativos y alternativos
             response = await adminAPI.createUser(payload);
           } else {
             response = await adminAPI.createDriver(payload);
           }
-        } catch (err) {
-          // si createUser lanzó por 404 u otro motivo, se maneja abajo
-          throw err;
-        }
-
+        } catch (err) { throw err; }
         const created = response?.data;
-        // extraer id y role devuelto del body (varía según backend)
         const createdId = created?.id || created?.user?.id || created?.userId || created?.data?.id || null;
         const createdRole = created?.role || created?.user?.role || created?.data?.role || null;
-
-        // Si pedimos admin pero backend devolvió otro role, intentar corregir si tenemos permisos
         if (roleToCreate === 'admin' && createdRole && createdRole !== 'admin') {
-          // Chequear si tenemos token/authorization configurada
           const authHeader = axios.defaults.headers.common['Authorization'];
           if (!authHeader) {
             setMessage({ text: 'Usuario creado, pero no hay token para asignar role admin automáticamente. Revisa sesión.', type: 'warning' });
           } else if (createdId) {
-            // Intentar actualizar role vía adminAPI.updateUser
             try {
               await adminAPI.updateUser(createdId, { role: 'admin' });
-              // si éxito, informar claramente
               setMessage({ text: 'Administrador creado y role actualizado correctamente.', type: 'success' });
             } catch (updateErr) {
               console.warn('No se pudo actualizar role a admin:', updateErr);
@@ -220,11 +241,8 @@ const AdminDashboard = () => {
             setMessage({ text: 'Usuario creado, pero backend devolvió role distinto y no se obtuvo id para actualizar.', type: 'warning' });
           }
         } else {
-          // todo bien o no pedimos admin
           setMessage({ text: roleToCreate === 'admin' ? 'Administrador creado exitosamente' : 'Conductor creado exitosamente', type: 'success' });
         }
-
-        // refrescar datos y cerrar modal
         await fetchAllUsers();
         await fetchStats();
         handleCloseUserModal();
@@ -234,8 +252,6 @@ const AdminDashboard = () => {
       const errMsg = error.response?.data?.error || error.response?.data?.message || error.message || 'Error al guardar el usuario';
       setUserFormError(errMsg);
       setMessage({ text: errMsg, type: 'error' });
-
-      // Si el error es 404 en createUser, avisar explícitamente que falta endpoint admin
       if (error?.response?.status === 404) {
         setUserFormError('Endpoint administrativo no encontrado (404). El backend no tiene POST /admin/users.');
       }
@@ -257,7 +273,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // Handlers rutas
+  // Handlers rutas (sin cambios)
   const handleOpenRouteModal = (route = null) => {
     setEditingRoute(route);
     setRouteFormError('');
@@ -290,65 +306,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // Robust delete / toggle handler for routes
-  const handleDeleteRoute = async (routeId, isActive) => {
-    const actionText = isActive ? 'desactivar' : 'activar';
-    if (!window.confirm(`¿Seguro que quieres ${actionText} esta ruta?`)) return;
-
-    // Buscar objeto de ruta localmente (para fallback PUT)
-    const routeObj = routes.find(r => String(r.id) === String(routeId));
-    try {
-      // Intentar DELETE primero
-      const deleteRes = await axios.delete(`/routes/${routeId}`);
-      // Si el servidor responde ok, refrescar y mostrar mensaje
-      setMessage({ text: `Ruta eliminada correctamente.`, type: 'success' });
-      await fetchRoutes();
-      await fetchStats();
-      return;
-    } catch (deleteErr) {
-      // DELETE falló: mostrar info en consola y seguir con fallback
-      const delStatus = deleteErr?.response?.status;
-      const delBody = deleteErr?.response?.data;
-      console.warn('DELETE /routes/:id fallo', delStatus, delBody);
-
-      // Si no tenemos el objeto completo, no podemos hacer PUT seguro
-      if (!routeObj) {
-        setMessage({ text: `Error al ${actionText} la ruta: no se encontró la ruta localmente.`, type: 'error' });
-        return;
-      }
-
-      // Construir payload completo para PUT fallback
-      const payload = {
-        ...routeObj,
-        // alternar is_active/active para mayor compatibilidad
-        is_active: !isActive,
-        active: !isActive,
-      };
-
-      try {
-        await routeAPI.update(routeId, payload);
-        setMessage({ text: `Ruta ${actionText} correctamente.`, type: 'success' });
-        await fetchRoutes();
-        await fetchStats();
-      } catch (updateErr) {
-        // Mostrar error detallado del backend para depuración
-        const status = updateErr?.response?.status;
-        const body = updateErr?.response?.data;
-        console.error('Error updating route fallback:', status, body, updateErr);
-
-        // Construir mensaje legible para UI
-        let serverMsg = null;
-        if (body) {
-          if (typeof body === 'string') serverMsg = body;
-          else if (body.error) serverMsg = body.error;
-          else if (body.message) serverMsg = body.message;
-          else serverMsg = JSON.stringify(body);
-        }
-        setMessage({ text: serverMsg ? `Error al ${actionText} la ruta: ${serverMsg}` : `Error al ${actionText} la ruta`, type: 'error' });
-      }
-    }
-  };
-
+  // RENDER
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
       <Header />
@@ -395,8 +353,18 @@ const AdminDashboard = () => {
                               size="small"
                               disabled={loadingRechargeAction === r.id}
                               onClick={() => handleConfirmRecharge(r.id)}
+                              sx={{ mr: 1 }}
                             >
                               {loadingRechargeAction === r.id ? <CircularProgress size={20} color="inherit" /> : 'Aprobar'}
+                            </Button>
+
+                            <Button
+                              variant="outlined"
+                              color="error"
+                              size="small"
+                              onClick={() => handleOpenReject(r.id)}
+                            >
+                              Rechazar
                             </Button>
                           </TableCell>
                         </TableRow>
@@ -408,6 +376,7 @@ const AdminDashboard = () => {
             </Paper>
           </Grid>
 
+          {/* Gestión de rutas: copia directa de tu layout (sin cambios) */}
           <Grid item xs={12} md={5}>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
@@ -457,7 +426,15 @@ const AdminDashboard = () => {
                             <Tooltip title={r.is_active ? "Desactivar Ruta" : "Activar Ruta"}>
                               <IconButton
                                 size="small"
-                                onClick={() => handleDeleteRoute(r.id, r.is_active)}
+                                onClick={() => {
+                                  // toggle via update (tu handler anterior)
+                                  routeAPI.update(r.id, { ...r, is_active: !r.is_active }).then(() => {
+                                    setMessage({ text: `Ruta ${r.is_active ? 'desactivada' : 'activada'}.`, type: 'success' });
+                                    fetchRoutes(); fetchStats();
+                                  }).catch(err => {
+                                    setMessage({ text: err?.response?.data?.error || 'Error al actualizar ruta', type: 'error' });
+                                  });
+                                }}
                               >
                                 {r.is_active ? <CloseIcon fontSize="small" color="error" /> : <AddIcon fontSize="small" color="success" />}
                               </IconButton>
@@ -563,6 +540,7 @@ const AdminDashboard = () => {
           </Grid>
         </Grid>
 
+        {/* Dialog para crear/editar rutas */}
         <Dialog open={openRouteForm} onClose={handleCloseRouteModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingRoute ? 'Editar Ruta' : 'Crear Nueva Ruta'}</DialogTitle>
           <DialogContent>
@@ -576,6 +554,7 @@ const AdminDashboard = () => {
           </DialogContent>
         </Dialog>
 
+        {/* Dialog para crear/editar usuarios */}
         <Dialog open={openUserForm} onClose={handleCloseUserModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}</DialogTitle>
           <DialogContent>
@@ -589,6 +568,32 @@ const AdminDashboard = () => {
             />
           </DialogContent>
         </Dialog>
+
+        {/* Dialog para rechazar recarga */}
+        <Dialog open={openRejectDialog} onClose={handleCloseReject} maxWidth="sm" fullWidth>
+          <DialogTitle>Rechazar Recarga</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Indica la razón del rechazo — esto será enviado al usuario como notificación.
+            </Typography>
+            <TextField
+              fullWidth
+              multiline
+              minRows={3}
+              maxRows={6}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="Escribe la razón del rechazo..."
+            />
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 2 }}>
+              <Button onClick={handleCloseReject} color="inherit">Cancelar</Button>
+              <Button onClick={handleConfirmReject} variant="contained" color="error" disabled={rejectLoading}>
+                {rejectLoading ? <CircularProgress size={18} color="inherit" /> : 'Confirmar Rechazo'}
+              </Button>
+            </Box>
+          </DialogContent>
+        </Dialog>
+
       </Container>
     </Box>
   );

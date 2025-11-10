@@ -41,7 +41,9 @@ export const tripAPI = {
 export const rechargeAPI = {
   create: (rechargeData) => axios.post('/recharges', rechargeData),
   getPending: () => axios.get('/recharges/pending'),
-  confirm: (id) => axios.put(`/recharges/${id}/confirm`)
+  confirm: (id) => axios.put(`/recharges/${id}/confirm`),
+  // Nuevo: rechazar recarga con razón (server debe exponer POST /recharges/:id/reject)
+  reject: (id, reason) => axios.post(`/recharges/${id}/reject`, { reason })
 };
 
 export const routeAPI = {
@@ -59,8 +61,11 @@ export const driverAPI = {
 };
 
 export const notificationsAPI = {
+  // driver notifications (existing)
   getLatestForDriver: (limit = 10) => axios.get('/drivers/notifications', { params: { limit } }),
-  markAsRead: (id) => axios.put(`/notifications/${id}/read`)
+  markAsRead: (id) => axios.put(`/notifications/${id}/read`),
+  // Nuevo: obtener notificaciones del usuario (pasajero) - server debe exponer GET /notifications (user auth)
+  getForUser: (limit = 20) => axios.get('/notifications', { params: { limit } })
 };
 
 export const adminAPI = {
