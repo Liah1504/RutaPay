@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { Container, Paper, Typography, TextField, Button, Box } from '@mui/material';
+import React, { useEffect, useState, useRef } from 'react';
+import { Container, Paper, Typography, TextField, Button, Box, Avatar } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 export default function SettingsPage() {
-  const { user, setUser } = useAuth(); // asumo que tu AuthContext provee user y setUser
+  const { user, setUser } = useAuth();
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
 
   const [form, setForm] = useState({
     email: '',
@@ -18,17 +19,32 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null);
 
+  // local state para la imagen preview (NO se guarda en localStorage)
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState(null);
+
   useEffect(() => {
     if (user) {
       setForm({
         email: user.email || '',
         phone: user.phone || user.telefono || '',
         vehicle: user.vehicle || '',
-        plate: user.plate || user.placa || '',
+        plate: user.placa || '',
         license_number: user.license_number || user.license || ''
       });
+      // preview inicial = avatar público (si existe)
+      setAvatarPreview(user?.avatar || null);
     }
   }, [user]);
+
+  useEffect(() => {
+    // liberar objectURL si creamos uno
+    return () => {
+      if (avatarPreview && avatarPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+    };
+  }, [avatarPreview]);
 
   const handleChange = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
 
@@ -38,31 +54,75 @@ export default function SettingsPage() {
     return path;
   };
 
+  const onSelectFile = (file) => {
+    if (!file) return;
+    setAvatarFile(file);
+    const url = URL.createObjectURL(file);
+    setAvatarPreview(url);
+    // NO guardar blob URL en localStorage
+  };
+
+  const handleFileInput = (e) => {
+    const f = e.target.files?.[0];
+    if (f) onSelectFile(f);
+  };
+
+  const handleClickChangePhoto = () => {
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setMsg(null);
 
-    // Preparamos payload: si el usuario es pasajero, removemos campos de vehículo
-    const payload = {
-      email: form.email,
-      phone: form.phone
-    };
-
-    if (user?.role && user.role !== 'passenger') {
-      // admin o driver -> enviar también los campos de vehículo
-      payload.vehicle = form.vehicle;
-      payload.plate = form.plate;
-      payload.license_number = form.license_number;
-    }
-
     try {
-      const res = await userAPI.updateProfile(payload);
-      // Actualizar user en contexto si procede
-      if (res?.data) {
-        try { setUser && setUser(res.data); } catch {}
+      // 1) Si hay avatarFile -> subir con multipart/form-data
+      if (avatarFile) {
+        const fd = new FormData();
+        fd.append('avatar', avatarFile);
+        fd.append('email', form.email);
+        fd.append('phone', form.phone);
+
+        if (user?.role && user.role !== 'passenger') {
+          fd.append('vehicle', form.vehicle);
+          fd.append('plate', form.plate);
+          fd.append('license_number', form.license_number);
+        }
+
+        // Esperamos la respuesta del servidor que debe devolver el perfil actualizado
+        const res = await userAPI.updateProfileForm(fd);
+
+        // backend debe devolver el usuario actualizado con 'avatar' = URL pública
+        if (res?.data) {
+          try {
+            setUser && setUser(res.data);
+            // opcional: guardar avatar pública en localStorage si quieres persistencia
+            try {
+              if (res.data.avatar) localStorage.setItem('rutapay_avatar', res.data.avatar);
+            } catch (err) { /* ignore */ }
+          } catch (err) {}
+        }
+      } else {
+        // 2) Sin avatar -> envío normal JSON
+        const payload = {
+          email: form.email,
+          phone: form.phone
+        };
+        if (user?.role && user.role !== 'passenger') {
+          payload.vehicle = form.vehicle;
+          payload.plate = form.plate;
+          payload.license_number = form.license_number;
+        }
+        const res = await userAPI.updateProfile(payload);
+        if (res?.data) {
+          try {
+            setUser && setUser(res.data);
+          } catch (err) {}
+        }
       }
-      // Navegar al inicio según rol y enviar state con mensaje de éxito
+
+      // Navegar al inicio y mostrar mensaje
       const homePath = goHomeForRole();
       navigate(homePath, { state: { successMessage: 'Guardado correctamente' } });
     } catch (err) {
@@ -75,7 +135,7 @@ export default function SettingsPage() {
   };
 
   const handleCancel = () => {
-    // navegar al inicio según rol sin mensaje
+    // no usamos localStorage para preview, así que sólo navegar
     const homePath = goHomeForRole();
     navigate(homePath);
   };
@@ -84,6 +144,27 @@ export default function SettingsPage() {
     <Container maxWidth="sm" sx={{ mt: 4 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h5" sx={{ mb: 3 }}>Ajustes de perfil</Typography>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+          <Avatar src={avatarPreview || undefined} sx={{ width: 72, height: 72 }} />
+          <Box>
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleFileInput}
+            />
+            <Button variant="contained" onClick={handleClickChangePhoto}>Cambiar foto</Button>
+            <Button sx={{ ml: 1 }} variant="outlined" onClick={() => {
+              setAvatarFile(null);
+              setAvatarPreview(user?.avatar || null);
+            }}>Eliminar</Button>
+            <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
+              JPG/PNG, máximo recomendado 2MB.
+            </Typography>
+          </Box>
+        </Box>
 
         <form onSubmit={handleSubmit}>
           <TextField
@@ -102,42 +183,17 @@ export default function SettingsPage() {
             onChange={handleChange('phone')}
           />
 
-          {/* Mostrar campos de vehículo SOLO si el rol no es 'passenger' */}
           {user?.role && user.role !== 'passenger' && (
             <>
-              <TextField
-                label="Unidad/Tipo de vehículo"
-                fullWidth
-                sx={{ mb: 2 }}
-                value={form.vehicle}
-                onChange={handleChange('vehicle')}
-              />
-
-              <TextField
-                label="Placa"
-                fullWidth
-                sx={{ mb: 2 }}
-                value={form.plate}
-                onChange={handleChange('plate')}
-              />
-
-              <TextField
-                label="Número de licencia"
-                fullWidth
-                sx={{ mb: 2 }}
-                value={form.license_number}
-                onChange={handleChange('license_number')}
-              />
+              <TextField label="Unidad/Tipo de vehículo" fullWidth sx={{ mb: 2 }} value={form.vehicle} onChange={handleChange('vehicle')} />
+              <TextField label="Placa" fullWidth sx={{ mb: 2 }} value={form.plate} onChange={handleChange('plate')} />
+              <TextField label="Número de licencia" fullWidth sx={{ mb: 2 }} value={form.license_number} onChange={handleChange('license_number')} />
             </>
           )}
 
           <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-            <Button type="submit" variant="contained" disabled={loading}>
-              {loading ? 'Guardando...' : 'Guardar cambios'}
-            </Button>
-            <Button variant="outlined" onClick={handleCancel}>
-              Cancelar
-            </Button>
+            <Button type="submit" variant="contained" disabled={loading}>{loading ? 'Guardando...' : 'Guardar cambios'}</Button>
+            <Button variant="outlined" onClick={handleCancel}>Cancelar</Button>
           </Box>
 
           {msg && (

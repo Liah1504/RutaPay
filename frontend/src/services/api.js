@@ -42,7 +42,7 @@ export const rechargeAPI = {
   create: (rechargeData) => axios.post('/recharges', rechargeData),
   getPending: () => axios.get('/recharges/pending'),
   confirm: (id) => axios.put(`/recharges/${id}/confirm`),
-  // Nuevo: rechazar recarga con razón (server debe exponer POST /recharges/:id/reject)
+  // Rechazo con razón (admin)
   reject: (id, reason) => axios.post(`/recharges/${id}/reject`, { reason })
 };
 
@@ -64,8 +64,10 @@ export const notificationsAPI = {
   // driver notifications (existing)
   getLatestForDriver: (limit = 10) => axios.get('/drivers/notifications', { params: { limit } }),
   markAsRead: (id) => axios.put(`/notifications/${id}/read`),
-  // Nuevo: obtener notificaciones del usuario (pasajero) - server debe exponer GET /notifications (user auth)
-  getForUser: (limit = 20) => axios.get('/notifications', { params: { limit } })
+  // Obtener notificaciones del usuario (pasajero)
+  getForUser: (limit = 20) => axios.get('/notifications', { params: { limit } }),
+  // Obtener notificaciones para admin (todas, con info del usuario). `type` opcional: 'payment' | 'recharge'
+  getForAdmin: (limit = 50, type = null) => axios.get('/notifications/admin', { params: { limit, type } })
 };
 
 export const adminAPI = {
