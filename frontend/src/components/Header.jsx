@@ -18,9 +18,11 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import Badge from '@mui/material/Badge';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import CircularProgress from '@mui/material/CircularProgress';
+import Snackbar from '@mui/material/Snackbar';
+import Alert from '@mui/material/Alert';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
-import { driverAPI } from '../services/api';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { driverAPI, notificationsAPI } from '../services/api';
 
 // Inline SVG fallback avatar (no archivos externos)
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -47,15 +49,32 @@ const normalizeAvatarUrl = (url) => {
 const Header = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [open, setOpen] = useState(false);
   const [anchorEl, setAnchorEl] = useState(null);
 
+  // Notifications state (works both for driver and passenger)
   const [anchorNotif, setAnchorNotif] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifsLoading, setNotifsLoading] = useState(false);
 
   const [avatarSrc, setAvatarSrc] = useState(null);
+
+  // Snackbar for global messages (reads location.state.successMessage)
+  const [snackOpen, setSnackOpen] = useState(false);
+  const [snackMsg, setSnackMsg] = useState('');
+
+  useEffect(() => {
+    // If navigation included a successMessage in state, show it
+    if (location?.state && location.state.successMessage) {
+      setSnackMsg(location.state.successMessage);
+      setSnackOpen(true);
+      // replace history entry to clear state so message doesn't reappear on refresh/back
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location?.state]);
 
   useEffect(() => {
     const tmpKeyPerUser = user?.id ? `tmpAvatarUrl_${user.id}` : null;
@@ -65,29 +84,44 @@ const Header = () => {
     setAvatarSrc(normalizeAvatarUrl(candidate) || null);
   }, [user?.id, user?.avatar]);
 
+  // carga de notificaciones — usa distinto endpoint segun rol:
+  const loadNotifs = async () => {
+    if (!user) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
+    try {
+      setNotifsLoading(true);
+      let res;
+      if (user.role === 'driver') {
+        // endpoint existente para drivers
+        res = await driverAPI.getNotifications(20);
+      } else {
+        // para pasajeros/admin usamos notificationsAPI (GET /api/notifications)
+        res = await notificationsAPI.getForUser(50);
+      }
+      const items = Array.isArray(res?.data) ? res.data : [];
+      setNotifications(items);
+      const unread = items.filter(i => !i.read).length;
+      setUnreadCount(unread);
+    } catch (err) {
+      console.warn('Header: error loading notifications', err);
+      setNotifications([]);
+      setUnreadCount(0);
+    } finally {
+      setNotifsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let mounted = true;
-    const loadNotifs = async () => {
-      if (!user || user.role !== 'driver') {
-        if (mounted) { setNotifications([]); setUnreadCount(0); }
-        return;
-      }
-      try {
-        setNotifsLoading(true);
-        const res = await driverAPI.getNotifications(6);
-        if (!mounted) return;
-        const items = Array.isArray(res?.data) ? res.data : [];
-        setNotifications(items);
-        const unread = items.filter(i => i && i.read === false).length || items.length;
-        setUnreadCount(unread);
-      } catch (err) {
-        console.warn('Header: error loading notifications', err);
-      } finally {
-        if (mounted) setNotifsLoading(false);
-      }
-    };
     loadNotifs();
-    return () => { mounted = false; };
+    // actualizar periódicamente
+    const iv = setInterval(loadNotifs, 10000);
+    // escuchar evento disparado por NotificationsPage después de marcar leída
+    const handler = () => loadNotifs();
+    window.addEventListener('notifications-updated', handler);
+    return () => { clearInterval(iv); window.removeEventListener('notifications-updated', handler); };
   }, [user?.id, user?.role]);
 
   const toggleDrawer = (v) => () => setOpen(v);
@@ -98,10 +132,13 @@ const Header = () => {
 
   const openNotifs = (e) => setAnchorNotif(e.currentTarget);
   const closeNotifs = () => setAnchorNotif(null);
-  const markReadLocal = (id) => { setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n))); setUnreadCount(c => Math.max(0, c-1)); };
+
+  const markReadLocal = (id) => {
+    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
+    setUnreadCount(c => Math.max(0, c-1));
+  };
 
   const handleImgError = (e) => {
-    // si falla la carga, poner fallback inline
     try { if (e && e.currentTarget) e.currentTarget.src = DEFAULT_AVATAR; } catch {}
   };
 
@@ -117,12 +154,20 @@ const Header = () => {
             <Typography variant="h6" component="div" sx={{ fontWeight: 700 }}>RutaPay</Typography>
           </Box>
 
-          {user?.role === 'driver' && (
-            <IconButton color="inherit" onClick={openNotifs} size="large" sx={{ mr: 1 }}>
-              <Badge badgeContent={unreadCount} color="error">
-                <NotificationsIcon />
-              </Badge>
-            </IconButton>
+          {user && (
+            user.role === 'driver' ? (
+              <IconButton color="inherit" onClick={openNotifs} size="large" sx={{ mr: 1 }}>
+                <Badge badgeContent={unreadCount} color="error">
+                  <NotificationsIcon />
+                </Badge>
+              </IconButton>
+            ) : (
+              <IconButton color="inherit" onClick={() => navigate('/notifications')} size="large" sx={{ mr: 1 }}>
+                <Badge badgeContent={unreadCount} color="error">
+                  <NotificationsIcon />
+                </Badge>
+              </IconButton>
+            )
           )}
 
           <IconButton color="inherit" onClick={handleAvatarClick} size="large">
@@ -154,14 +199,15 @@ const Header = () => {
         </Box>
       </Drawer>
 
+      {/* Menu de notificaciones para drivers */}
       <Menu anchorEl={anchorNotif} open={Boolean(anchorNotif)} onClose={closeNotifs} PaperProps={{ style: { maxHeight: 320, width: 360, padding: 0 } }}>
         {notifsLoading ? <Box sx={{ display:'flex', justifyContent:'center', p:2 }}><CircularProgress size={20} /></Box> :
           (notifications.length === 0 ? <MenuItem disabled>No hay notificaciones</MenuItem> :
             notifications.map(n => (
               <MenuItem key={n.id} onClick={() => { if (!n.read) markReadLocal(n.id); closeNotifs(); }} sx={{ whiteSpace: 'normal', alignItems: 'flex-start' }}>
                 <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{n.passenger_name || n.title || 'Evento'}</Typography>
-                  <Typography variant="body2" color="text.secondary">{n.route_name ? `${n.route_name} • ` : ''}{n.amount ? `Bs ${parseFloat(n.amount).toFixed(2)}` : ''}</Typography>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{n.title || n.passenger_name || 'Evento'}</Typography>
+                  <Typography variant="body2" color="text.secondary">{n.body || (n.route_name ? `${n.route_name} • ` : '')}{n.amount ? `Bs ${parseFloat(n.amount).toFixed(2)}` : ''}</Typography>
                   <Typography variant="caption" color="text.secondary">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</Typography>
                 </Box>
               </MenuItem>
@@ -174,6 +220,13 @@ const Header = () => {
         <MenuItem onClick={() => { closeProfileMenu(); navigate('/settings'); }}>Ajustes</MenuItem>
         <MenuItem onClick={handleLogout}>Cerrar sesión</MenuItem>
       </Menu>
+
+      {/* Global Snackbar for success messages passed via navigation state */}
+      <Snackbar open={snackOpen} autoHideDuration={3500} onClose={() => setSnackOpen(false)} anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        <Alert onClose={() => setSnackOpen(false)} severity="success" sx={{ width: '100%' }}>
+          {snackMsg}
+        </Alert>
+      </Snackbar>
     </>
   );
 };

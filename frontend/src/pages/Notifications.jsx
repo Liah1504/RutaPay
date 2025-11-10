@@ -12,6 +12,8 @@ export default function NotificationsPage() {
     try {
       const res = await notificationsAPI.getForUser(50);
       setNotifications(res.data || []);
+      // after load, notify header to refresh badge
+      window.dispatchEvent(new Event('notifications-updated'));
     } catch (err) {
       console.error('Error cargando notifs:', err);
     } finally {
@@ -27,6 +29,8 @@ export default function NotificationsPage() {
     try {
       await notificationsAPI.markAsRead(id);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+      // notify Header to reload unread count immediately
+      window.dispatchEvent(new Event('notifications-updated'));
     } catch (err) {
       console.error('Error marcando leída', err);
     }

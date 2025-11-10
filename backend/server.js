@@ -1,3 +1,4 @@
+// backend/server.js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -29,6 +30,8 @@ const rechargesRoutes = tryRequire('./routes/recharges', 'recharges routes');
 const userRoutes = tryRequire('./routes/userRoutes', 'user routes');
 const adminRoutes = tryRequire('./routes/admin', 'admin routes');
 const paymentRoutes = tryRequire('./routes/payment', 'payment routes');
+// NUEVO: intentar cargar notifications router (añadido)
+const notificationsRoutes = tryRequire('./routes/notifications', 'notifications routes');
 
 console.log('🔍 Cargando rutas...');
 
@@ -65,8 +68,8 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // 🌐 ENDPOINT DE SALUD - SIN AUTENTICACIÓN
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     message: '🚀 Servidor Rutapay funcionando correctamente',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
@@ -76,7 +79,7 @@ app.get('/api/health', (req, res) => {
 
 // Ruta principal - SIN AUTENTICACIÓN
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     message: '🚀 Bienvenido a Rutapay API',
     version: '1.0.0',
     status: 'Servidor funcionando correctamente',
@@ -85,7 +88,7 @@ app.get('/', (req, res) => {
         'POST /api/auth/login': 'Iniciar sesión',
         'POST /api/auth/register': 'Registrar usuario'
       },
-      users: { 
+      users: {
         'GET /api/users/profile': 'Obtener perfil del usuario actual'
       },
       drivers: {
@@ -106,12 +109,17 @@ app.get('/', (req, res) => {
       recharges: {
         'POST /api/recharges': 'Registrar recarga de saldo',
         'GET /api/recharges/pending': 'Ver recargas pendientes (admin)',
-        'PUT /api/recharges/:id/confirm': 'Confirmar recarga (admin)'
+        'PUT /api/recharges/:id/confirm': 'Confirmar recarga (admin)',
+        'POST /api/recharges/:id/reject': 'Rechazar recarga (admin) -- si está implementado'
+      },
+      notifications: {
+        'GET /api/notifications': 'Obtener notificaciones del usuario autenticado',
+        'PUT /api/notifications/:id/read': 'Marcar notificación como leída'
       },
       payment: {
         'POST /api/payment/pay': 'Pago manual de pasajero a conductor'
       },
-      admin: { 
+      admin: {
         'GET /api/admin/users': 'Listar todos los usuarios',
         'PUT /api/admin/users/:id': 'Actualizar usuario',
         'DELETE /api/admin/users/:id': 'Eliminar usuario',
@@ -158,6 +166,13 @@ if (rechargesRoutes) {
   console.log('✅ Mounted: /api/recharges');
 } else {
   console.warn('⚠️ Saltando montaje de /api/recharges porque rechargesRoutes no está disponible');
+}
+
+if (notificationsRoutes) {
+  app.use('/api/notifications', notificationsRoutes);
+  console.log('✅ Mounted: /api/notifications');
+} else {
+  console.warn('⚠️ Saltando montaje de /api/notifications porque notificationsRoutes no está disponible');
 }
 
 if (userRoutes) {
@@ -222,11 +237,11 @@ app.use('*', (req, res) => {
     availableRoutes: [
       'GET /api/health',
       'GET /api/routes/test',
-      'POST /api/auth/register', 
+      'POST /api/auth/register',
       'POST /api/auth/login',
       'GET /api/users/profile',
       'GET /api/drivers/available',
-      'PUT /api/drivers/status', 
+      'PUT /api/drivers/status',
       'GET /api/drivers/profile',
       'GET /api/routes',
       'GET /api/routes/propatria-chacaito',
@@ -240,7 +255,9 @@ app.use('*', (req, res) => {
       'POST /api/payment/pay',
       'GET /api/admin/users',
       'PUT /api/admin/users/:id',
-      'DELETE /api/admin/users/:id'
+      'DELETE /api/admin/users/:id',
+      'GET /api/notifications', // agregado a la lista de endpoints disponibles
+      'PUT /api/notifications/:id/read'
     ]
   });
 });
@@ -250,8 +267,8 @@ app.use((error, req, res, next) => {
   console.error('❌ Error del servidor:', error);
   res.status(500).json({
     error: 'Error interno del servidor',
-    message: process.env.NODE_ENV === 'production' 
-      ? 'Algo salió mal en el servidor' 
+    message: process.env.NODE_ENV === 'production'
+      ? 'Algo salió mal en el servidor'
       : error.message,
     timestamp: new Date().toISOString()
   });

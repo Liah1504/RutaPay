@@ -7,6 +7,7 @@ import PassengerDashboard from './pages/PassengerDashboard';
 import DriverDashboard from './pages/DriverDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import SettingsPage from './pages/SettingsPage';
+import NotificationsPage from './pages/Notifications';
 
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children, requiredRole }) => {
@@ -100,6 +101,16 @@ function App() {
               element={
                 <ProtectedRoute requiredRole={['driver', 'passenger']}>
                   <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Nueva: Notificaciones (cualquier usuario autenticado) */}
+            <Route
+              path="/notifications"
+              element={
+                <ProtectedRoute>
+                  <NotificationsPage />
                 </ProtectedRoute>
               }
             />
