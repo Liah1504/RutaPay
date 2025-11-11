@@ -16,8 +16,10 @@ const PassengerDashboard = () => {
 
   const [routes, setRoutes] = useState([]);
   const [trips, setTrips] = useState([]);
+  const [payments, setPayments] = useState([]); // historial de pagos traído desde backend
   const [loadingRoutes, setLoadingRoutes] = useState(true);
   const [loadingAction, setLoadingAction] = useState(false);
+  const [loadingPayments, setLoadingPayments] = useState(false);
   const [message, setMessage] = useState('');
   const [selectedRoute, setSelectedRoute] = useState(null);
 
@@ -55,7 +57,7 @@ const PassengerDashboard = () => {
     }
   }, []);
 
-  // Cargar historial de viajes del pasajero
+  // Cargar historial de viajes del pasajero (trips)
   const fetchPassengerTrips = useCallback(async () => {
     try {
       const response = await tripAPI.getPassengerTrips();
@@ -66,17 +68,40 @@ const PassengerDashboard = () => {
     }
   }, []);
 
+  // Cargar pagos del pasajero (backend /api/payments)
+  const fetchPayments = useCallback(async (date = undefined) => {
+    setLoadingPayments(true);
+    try {
+      const res = await paymentAPI.getHistory(date);
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      setPayments(rows);
+    } catch (err) {
+      console.error('Error cargando historial de pagos:', err);
+      setPayments([]);
+    } finally {
+      setLoadingPayments(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchRoutes();
     fetchPassengerTrips();
+    // cargar pagos sin filtro inicialmente
+    fetchPayments();
 
-    // Polling para el historial de pagos (cada 10s)
-    const interval = setInterval(() => {
+    // Polling para actualizar trips y pagos periódicamente
+    const tripsInterval = setInterval(() => {
       fetchPassengerTrips();
     }, 10000);
+    const paymentsInterval = setInterval(() => {
+      fetchPayments(filterDate || undefined);
+    }, 20000); // cada 20s actualiza pagos (si hay filtro se respeta)
 
-    return () => clearInterval(interval);
-  }, [fetchRoutes, fetchPassengerTrips]);
+    return () => {
+      clearInterval(tripsInterval);
+      clearInterval(paymentsInterval);
+    };
+  }, [fetchRoutes, fetchPassengerTrips, fetchPayments, filterDate]);
 
   // ==================================================================
   // Recarga de saldo
@@ -148,8 +173,9 @@ const PassengerDashboard = () => {
       });
 
       setMessage('¡Pago realizado exitosamente!');
-      // refrescar historial y saldo
+      // refrescar historial de viajes, pagos y saldo
       await fetchPassengerTrips();
+      await fetchPayments(filterDate || undefined);
       try { await fetchAndUpdateUser(); } catch (e) { /* no crítico */ }
 
       closePaymentDialog();
@@ -162,10 +188,10 @@ const PassengerDashboard = () => {
     }
   };
 
-  // Filtrado local del historial por fecha YYYY-MM-DD
-  const filteredTrips = trips.filter(trip => {
+  // Filtrado local de payments por fecha por si el backend devuelve muchos (fallback)
+  const filteredPayments = payments.filter(p => {
     if (!filterDate) return true;
-    const d = new Date(trip.created_at || trip.date);
+    const d = new Date(p.created_at || p.date);
     if (Number.isNaN(d.getTime())) return false;
     return d.toISOString().slice(0, 10) === filterDate;
   });
@@ -182,6 +208,18 @@ const PassengerDashboard = () => {
     in_progress: 'En camino',
     completed: 'Completado',
   }[status] || status);
+
+  // Handler para cambio de fecha: actualiza estado y recarga pagos desde backend
+  const handleFilterDateChange = (value) => {
+    setFilterDate(value);
+    // llamar al backend con el filtro seleccionado
+    fetchPayments(value || undefined);
+  };
+
+  const handleClearFilter = () => {
+    setFilterDate('');
+    fetchPayments();
+  };
 
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -309,35 +347,43 @@ const PassengerDashboard = () => {
                   <TextField
                     type="date"
                     value={filterDate}
-                    onChange={(e) => setFilterDate(e.target.value)}
+                    onChange={(e) => handleFilterDateChange(e.target.value)}
                     size="small"
                     InputLabelProps={{ shrink: true }}
                     sx={{ minWidth: 180 }}
                   />
-                  <Button variant="outlined" onClick={() => setFilterDate('')}>Borrar filtro</Button>
+                  <Button variant="outlined" onClick={handleClearFilter}>Borrar filtro</Button>
                 </Box>
               </Box>
 
-              {trips.length > 0 ? (
+              {loadingPayments ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : payments.length > 0 ? (
                 <TableContainer>
                   <Table size="small">
                     <TableHead>
                       <TableRow>
                         <TableCell>Fecha</TableCell>
-                        <TableCell>Ruta</TableCell>
+                        <TableCell>Referencia / Ruta</TableCell>
                         <TableCell>Conductor</TableCell>
                         <TableCell align="right">Monto Pagado</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {filteredTrips.map((trip) => (
-                        <TableRow key={trip.id}>
-                          <TableCell>{new Date(trip.created_at).toLocaleString()}</TableCell>
-                          <TableCell>{trip.route_name}</TableCell>
-                          <TableCell>{trip.driver_name || 'N/A'}</TableCell>
+                      {filteredPayments.map((p) => (
+                        <TableRow key={p.id}>
+                          <TableCell>{p.created_at ? new Date(p.created_at).toLocaleString() : ''}</TableCell>
+                          <TableCell>
+                            {p.reference || p.route_name || (p.data && p.data.route_name) || `#${p.id}`}
+                          </TableCell>
+                          <TableCell>
+                            {p.driver_name || (p.data && p.data.driver_name) || 'N/A'}
+                          </TableCell>
                           <TableCell align="right">
                             <Typography color="error.main" sx={{ fontWeight: 'bold' }}>
-                              -{parseFloat(trip.fare).toFixed(2)} Bs
+                              -{parseFloat(p.amount || p.price || 0).toFixed(2)} Bs
                             </Typography>
                           </TableCell>
                         </TableRow>
@@ -346,7 +392,37 @@ const PassengerDashboard = () => {
                   </Table>
                 </TableContainer>
               ) : (
-                <Typography color="text.secondary">No has realizado ningún pago todavía.</Typography>
+                // Si no hay pagos (backend) mostramos fallback con trips históricos ya existentes
+                (trips.length > 0) ? (
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Fecha</TableCell>
+                          <TableCell>Ruta</TableCell>
+                          <TableCell>Conductor</TableCell>
+                          <TableCell align="right">Monto Pagado</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {trips.map((trip) => (
+                          <TableRow key={trip.id}>
+                            <TableCell>{new Date(trip.created_at || trip.date).toLocaleString()}</TableCell>
+                            <TableCell>{trip.route_name}</TableCell>
+                            <TableCell>{trip.driver_name || 'N/A'}</TableCell>
+                            <TableCell align="right">
+                              <Typography color="error.main" sx={{ fontWeight: 'bold' }}>
+                                -{parseFloat(trip.fare).toFixed(2)} Bs
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                ) : (
+                  <Typography color="text.secondary">No has realizado ningún pago todavía.</Typography>
+                )
               )}
             </Paper>
           </Grid>

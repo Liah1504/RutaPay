@@ -42,7 +42,6 @@ export const rechargeAPI = {
   create: (rechargeData) => axios.post('/recharges', rechargeData),
   getPending: () => axios.get('/recharges/pending'),
   confirm: (id) => axios.put(`/recharges/${id}/confirm`),
-  // Rechazo con razón (admin)
   reject: (id, reason) => axios.post(`/recharges/${id}/reject`, { reason })
 };
 
@@ -61,12 +60,9 @@ export const driverAPI = {
 };
 
 export const notificationsAPI = {
-  // driver notifications (existing)
   getLatestForDriver: (limit = 10) => axios.get('/drivers/notifications', { params: { limit } }),
   markAsRead: (id) => axios.put(`/notifications/${id}/read`),
-  // Obtener notificaciones del usuario (pasajero)
   getForUser: (limit = 20) => axios.get('/notifications', { params: { limit } }),
-  // Obtener notificaciones para admin (todas, con info del usuario). `type` opcional: 'payment' | 'recharge'
   getForAdmin: (limit = 50, type = null) => axios.get('/notifications/admin', { params: { limit, type } })
 };
 
@@ -76,7 +72,6 @@ export const adminAPI = {
   updateUser: (id, userData) => axios.put(`/admin/users/${id}`, userData),
   deleteUser: (id) => axios.delete(`/admin/users/${id}`),
   createDriver: (driverData) => axios.post('/admin/drivers', driverData),
-
   createUser: async (userData) => {
     const payloadWithRole = { ...userData, role: userData.role || 'admin' };
     try {
@@ -97,8 +92,15 @@ export const adminAPI = {
   },
 };
 
+// IMPORTANT: use the existing backend router mounted at /api/payment (singular)
 export const paymentAPI = {
-  executePayment: (paymentData) => axios.post('/payment/pay', paymentData)
+  executePayment: (paymentData) => axios.post('/payment/pay', paymentData),
+  // getHistory calls the mounted backend route /api/payment
+  getHistory: (date) => {
+    const params = {};
+    if (date) params.date = date;
+    return axios.get('/payment', { params });
+  }
 };
 
 export default axios;

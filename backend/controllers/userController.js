@@ -1,7 +1,7 @@
-// backend/controllers/userController.js
 const db = require('../config/database');
 const fs = require('fs');
 const path = require('path');
+const multer = require('multer');
 
 const AVATAR_DIR = path.join(__dirname, '..', 'public', 'avatars');
 const AVATAR_MAP_FILE = path.join(AVATAR_DIR, 'avatars.json');
@@ -48,10 +48,16 @@ const checkAvatarColumn = async () => {
  * Construye la base URL del backend con protocolo y host (ej: http://localhost:5002)
  */
 const getBackendBaseUrl = (req) => {
-  // Si defines BACKEND_URL en .env puedes usarlo; si no, construimos a partir de la request.
   if (process.env.BACKEND_URL) return process.env.BACKEND_URL.replace(/\/$/, '');
   return `${req.protocol}://${req.get('host')}`;
 };
+
+/**
+ * Multer middleware en memoria: producirá req.file.buffer
+ * - Uso recomendado en la ruta: router.put('/profile', authenticateToken, uploadAvatarMiddleware, updateProfile)
+ */
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const uploadAvatarMiddleware = upload.single('avatar');
 
 const getProfile = async (req, res) => {
   try {
@@ -99,7 +105,7 @@ const getProfile = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { email, phone } = req.body;
+    const { email, phone, vehicle, plate, license_number } = req.body;
 
     const fields = [];
     const values = [];
@@ -107,8 +113,12 @@ const updateProfile = async (req, res) => {
 
     if (email !== undefined) { fields.push(`email = $${idx++}`); values.push(email); }
     if (phone !== undefined) { fields.push(`phone = $${idx++}`); values.push(phone); }
+    if (vehicle !== undefined) { fields.push(`vehicle = $${idx++}`); values.push(vehicle); }
+    if (plate !== undefined) { fields.push(`plate = $${idx++}`); values.push(plate); }
+    if (license_number !== undefined) { fields.push(`license_number = $${idx++}`); values.push(license_number); }
 
     let avatarUrl = null;
+    // Support both multer memory upload (req.file.buffer) and legacy file handling if any
     if (req.file && req.file.buffer) {
       if (!fs.existsSync(AVATAR_DIR)) fs.mkdirSync(AVATAR_DIR, { recursive: true });
       const ext = (req.file.originalname && path.extname(req.file.originalname)) || '.png';
@@ -132,7 +142,7 @@ const updateProfile = async (req, res) => {
         ? 'id, name, email, phone, balance, avatar, role'
         : 'id, name, email, phone, balance, role';
 
-      const q = `UPDATE users SET ${fields.join(', ')} WHERE id = $${idx} RETURNING ${returningFields}`;
+      const q = `UPDATE users SET ${fields.join(', ')}, updated_at = now() WHERE id = $${idx} RETURNING ${returningFields}`;
       values.push(userId);
       const result = await db.query(q, values);
       resultRow = result.rows[0];
@@ -147,18 +157,20 @@ const updateProfile = async (req, res) => {
     const response = resultRow ? { ...resultRow } : {};
     if (avatarUrl) response.avatarUrl = avatarUrl;
 
+    // If avatar uploaded but no other fields updated, return avatarUrl so frontend can update immediately
     if (!resultRow && !avatarUrl) {
       return res.status(400).json({ error: 'No hay campos para actualizar' });
     }
 
     return res.json(response);
   } catch (err) {
-    console.error('Error updateProfile:', err);
+    console.error('Error updateProfile:', err && (err.stack || err.message || err));
     return res.status(500).json({ error: 'Error al actualizar perfil' });
   }
 };
 
 module.exports = {
   getProfile,
-  updateProfile
+  updateProfile,
+  uploadAvatarMiddleware
 };
