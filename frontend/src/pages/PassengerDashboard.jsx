@@ -68,11 +68,30 @@ const PassengerDashboard = () => {
     }
   }, []);
 
-  // Cargar pagos del pasajero (backend /api/payments)
+  // Cargar pagos del pasajero (backend /api/payment)
+  // Si el usuario selecciona una fecha en el input (YYYY-MM-DD) convertimos ese día local
+  // a un rango UTC [localMidnight, localEndOfDay] y pedimos al backend por start/end.
   const fetchPayments = useCallback(async (date = undefined) => {
     setLoadingPayments(true);
     try {
-      const res = await paymentAPI.getHistory(date);
+      let res;
+      if (date) {
+        // date: 'YYYY-MM-DD' from input type=date (local)
+        const [y, m, d] = String(date).split('-').map(Number);
+        // create local start/end times (midnight local -> end of day local)
+        const localStart = new Date(y, m - 1, d, 0, 0, 0, 0);
+        const localEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
+
+        // Convert these local times to ISO UTC strings
+        const startUtc = localStart.toISOString();
+        const endUtc = localEnd.toISOString();
+
+        res = await paymentAPI.getHistoryRange(startUtc, endUtc);
+      } else {
+        // legacy: no filter => get recent history
+        res = await paymentAPI.getHistory();
+      }
+
       const rows = Array.isArray(res?.data) ? res.data : [];
       setPayments(rows);
     } catch (err) {
@@ -189,11 +208,14 @@ const PassengerDashboard = () => {
   };
 
   // Filtrado local de payments por fecha por si el backend devuelve muchos (fallback)
+  // IMPORTANT: compare using local date string so filter matches user's local day.
   const filteredPayments = payments.filter(p => {
     if (!filterDate) return true;
     const d = new Date(p.created_at || p.date);
     if (Number.isNaN(d.getTime())) return false;
-    return d.toISOString().slice(0, 10) === filterDate;
+    // en-CA -> YYYY-MM-DD (estable), usamos la fecha local para comparación
+    const localDate = d.toLocaleDateString('en-CA');
+    return localDate === filterDate;
   });
 
   // Helpers de estado y formato
@@ -212,7 +234,7 @@ const PassengerDashboard = () => {
   // Handler para cambio de fecha: actualiza estado y recarga pagos desde backend
   const handleFilterDateChange = (value) => {
     setFilterDate(value);
-    // llamar al backend con el filtro seleccionado
+    // llamar al backend con el filtro seleccionado (backend acepta start/end)
     fetchPayments(value || undefined);
   };
 

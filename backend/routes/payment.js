@@ -34,15 +34,20 @@ function findUserColumn(columns) {
 }
 
 /**
- * GET /api/payment?date=YYYY-MM-DD[&userId=123]
- * - Usuarios normales: filtran por su id (en la columna detectada)
- * - Admin: puede ver todos o filtrar por userId
+ * GET /api/payment
+ * - soporta:
+ *    - start & end (ISO UTC) => p.created_at BETWEEN start AND end  (recomendado)
+ *    - date=YYYY-MM-DD (legacy) => DATE(p.created_at) = date  (mantener compatibilidad)
+ * - Admin puede filtrar por userId
+ * - Usuarios normales verán solo sus pagos (se usa la columna detectada)
  *
  * La consulta se arma dinámicamente según las columnas existentes para evitar errores.
  */
 router.get('/', authenticateToken, async (req, res) => {
   const user = req.user;
-  const date = req.query.date ? String(req.query.date) : null;
+  const start = req.query.start ? String(req.query.start) : null; // ISO UTC start
+  const end = req.query.end ? String(req.query.end) : null;       // ISO UTC end
+  const date = req.query.date ? String(req.query.date) : null;    // legacy YYYY-MM-DD
   const qUserId = req.query.userId ? parseInt(req.query.userId, 10) : null;
 
   try {
@@ -56,55 +61,41 @@ router.get('/', authenticateToken, async (req, res) => {
       return res.status(500).json({ error: 'Error interno: columna de usuario no encontrada en payments', message: msg });
     }
 
-    // Construir SELECT dinámico
-    const selectCols = ['p.id', `p.${userCol} AS user_id`];
+    // Construir SELECT dinámico (con columnas que realmente existen)
+    const selectParts = [];
+    selectParts.push('p.id');
+    selectParts.push(`p.${userCol} AS user_id`);
 
-    // Campos base comunes: amount, created_at si existen
-    if (columns.includes('amount')) selectCols.push('p.amount');
-    if (columns.includes('created_at')) selectCols.push('p.created_at');
+    if (columns.includes('amount')) selectParts.push('p.amount');
+    if (columns.includes('created_at')) selectParts.push('p.created_at');
+    if (columns.includes('reference')) selectParts.push('p.reference');
+    if (columns.includes('method')) selectParts.push('p.method');
+    if (columns.includes('note')) selectParts.push('p.note');
+    if (columns.includes('data')) selectParts.push('p.data');
 
-    // Campos opcionales: reference, method, note, data
-    if (columns.includes('reference')) selectCols.push('p.reference');
-    if (columns.includes('method')) selectCols.push('p.method');
-    if (columns.includes('note')) selectCols.push('p.note');
-    if (columns.includes('data')) selectCols.push('p.data');
-
-    // Include driver_id and route_id if present (and later we'll join for names)
     const hasDriverId = columns.includes('driver_id');
     const hasRouteId = columns.includes('route_id');
-    if (hasDriverId) selectCols.push('p.driver_id');
-    if (hasRouteId) selectCols.push('p.route_id');
+    if (hasDriverId) selectParts.push('p.driver_id');
+    if (hasRouteId) selectParts.push('p.route_id');
 
-    // Build FROM + optional joins
-    let text = `SELECT ${selectCols.join(', ')} FROM payments p`;
+    // Preparar joins si existen columnas relacionadas
     const joinClauses = [];
-    // left join users as driver to get driver_name (if driver_id exists)
+    const extraSelects = [];
     if (hasDriverId) {
-      joinClauses.push(`LEFT JOIN users d ON d.id = p.driver_id`);
-      // select driver name
-      text = text.replace('FROM payments p', `FROM payments p LEFT JOIN users d ON d.id = p.driver_id`);
-      text = text.replace('SELECT ', 'SELECT ');
-      // append driver_name selection if we didn't already request it
-      if (!selectCols.includes('d.name AS driver_name')) {
-        text = text.replace('FROM payments p', `, d.name AS driver_name FROM payments p`);
-      }
+      joinClauses.push('LEFT JOIN users d ON d.id = p.driver_id');
+      extraSelects.push('d.name AS driver_name');
     }
-    // left join routes to get route_name
     if (hasRouteId) {
-      // If we already modified text above, add join accordingly
-      if (text.includes('LEFT JOIN users d ON')) {
-        text += ` LEFT JOIN routes r ON r.id = p.route_id`;
-        text = text.replace('SELECT ', 'SELECT ');
-        if (!text.includes('r.name AS route_name')) {
-          // insert route_name into select list after IDENTIFICATION of select
-          text = text.replace('FROM payments p', `, r.name AS route_name FROM payments p`);
-        }
-      } else {
-        text = text.replace('FROM payments p', `, r.name AS route_name FROM payments p LEFT JOIN routes r ON r.id = p.route_id`);
-      }
+      joinClauses.push('LEFT JOIN routes r ON r.id = p.route_id');
+      extraSelects.push('r.name AS route_name');
     }
 
-    // Build WHERE conditions and params
+    // Montar consulta final
+    const allSelects = [...extraSelects, ...selectParts];
+    let text = `SELECT ${allSelects.join(', ')} FROM payments p`;
+    if (joinClauses.length > 0) text += ' ' + joinClauses.join(' ');
+
+    // WHERE conditions & params
     const where = [];
     const params = [];
 
@@ -118,24 +109,29 @@ router.get('/', authenticateToken, async (req, res) => {
       where.push(`p.${userCol} = $${params.length}`);
     }
 
-    if (date) {
+    // Preferir start/end (más preciso con zonas horarias). Si no están,
+    // aceptar legacy date param (DATE(created_at) = 'YYYY-MM-DD').
+    if (start && end) {
+      params.push(start);
+      where.push(`p.created_at >= $${params.length}`);
+      params.push(end);
+      where.push(`p.created_at <= $${params.length}`);
+    } else if (date) {
+      // Legacy behavior (kept for compatibility)
       params.push(date);
       where.push(`DATE(p.created_at) = $${params.length}`);
     }
 
-    if (where.length > 0) {
-      text += ' WHERE ' + where.join(' AND ');
-    }
+    if (where.length > 0) text += ' WHERE ' + where.join(' AND ');
 
     text += ' ORDER BY p.created_at DESC LIMIT 200';
 
-    // Ejecutar consulta
     const result = await db.query(text, params);
 
     // Normalizar salida: ensure driver_name / route_name keys exist (may be undefined)
     const rows = result.rows.map(r => {
-      if (r.driver_name === undefined && r.driver_id !== undefined) r.driver_name = null;
-      if (r.route_name === undefined && r.route_id !== undefined) r.route_name = null;
+      if (hasDriverId && !('driver_name' in r)) r.driver_name = null;
+      if (hasRouteId && !('route_name' in r)) r.route_name = null;
       return r;
     });
 

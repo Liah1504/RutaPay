@@ -95,12 +95,14 @@ export const adminAPI = {
 // IMPORTANT: use the existing backend router mounted at /api/payment (singular)
 export const paymentAPI = {
   executePayment: (paymentData) => axios.post('/payment/pay', paymentData),
-  // getHistory calls the mounted backend route /api/payment
+  // Legacy: allow calling with date param (kept for compatibility)
   getHistory: (date) => {
     const params = {};
     if (date) params.date = date;
     return axios.get('/payment', { params });
-  }
+  },
+  // Preferred: range-based history: expects start/end as ISO UTC strings
+  getHistoryRange: (startIso, endIso) => axios.get('/payment', { params: { start: startIso, end: endIso } })
 };
 
 export default axios;
