@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import IconButton from '@mui/material/IconButton';
@@ -22,7 +22,7 @@ import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { driverAPI, notificationsAPI } from '../services/api';
+import { notificationsAPI } from '../services/api';
 
 // Inline SVG fallback avatar (no archivos externos)
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -74,6 +74,7 @@ const Header = () => {
       // replace history entry to clear state so message doesn't reappear on refresh/back
       navigate(location.pathname, { replace: true, state: {} });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location?.state]);
 
   useEffect(() => {
@@ -84,8 +85,8 @@ const Header = () => {
     setAvatarSrc(normalizeAvatarUrl(candidate) || null);
   }, [user?.id, user?.avatar]);
 
-  // carga de notificaciones — usa distinto endpoint segun rol:
-  const loadNotifs = async () => {
+  // carga de notificaciones — ahora usamos el endpoint común /api/notifications
+  const loadNotifs = useCallback(async () => {
     if (!user) {
       setNotifications([]);
       setUnreadCount(0);
@@ -93,14 +94,8 @@ const Header = () => {
     }
     try {
       setNotifsLoading(true);
-      let res;
-      if (user.role === 'driver') {
-        // endpoint existente para drivers
-        res = await driverAPI.getNotifications(20);
-      } else {
-        // para pasajeros/admin usamos notificationsAPI (GET /api/notifications)
-        res = await notificationsAPI.getForUser(50);
-      }
+      // Pedimos solo no leídas para badge/preview
+      const res = await notificationsAPI.getForUser(20, true);
       const items = Array.isArray(res?.data) ? res.data : [];
       setNotifications(items);
       const unread = items.filter(i => !i.read).length;
@@ -112,7 +107,7 @@ const Header = () => {
     } finally {
       setNotifsLoading(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     loadNotifs();
@@ -122,7 +117,7 @@ const Header = () => {
     const handler = () => loadNotifs();
     window.addEventListener('notifications-updated', handler);
     return () => { clearInterval(iv); window.removeEventListener('notifications-updated', handler); };
-  }, [user?.id, user?.role]);
+  }, [loadNotifs]);
 
   const toggleDrawer = (v) => () => setOpen(v);
   const nav = (p) => { setOpen(false); navigate(p); };
@@ -130,12 +125,23 @@ const Header = () => {
   const closeProfileMenu = () => setAnchorEl(null);
   const handleLogout = async () => { closeProfileMenu(); if (logout) await logout(); navigate('/'); };
 
-  const openNotifs = (e) => setAnchorNotif(e.currentTarget);
-  const closeNotifs = () => setAnchorNotif(null);
+  // cuando se hace click en la campana, abrimos la página completa de notificaciones
+  const handleBellClick = () => navigate('/notifications');
 
-  const markReadLocal = (id) => {
-    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
-    setUnreadCount(c => Math.max(0, c-1));
+  // marcar como leída llamando al endpoint y disparar evento global para refrescar header/pages
+  const markReadLocal = async (id) => {
+    try {
+      const res = await notificationsAPI.markAsRead(id);
+      const newCount = res?.data?.unread_count;
+      // actualizar badge localmente si backend devolvió unread_count
+      if (typeof newCount === 'number') setUnreadCount(newCount);
+      // actualizar listado local si lo tenemos (marcar read)
+      setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
+      // notificar al resto de la app para que recargue si es necesario
+      window.dispatchEvent(new Event('notifications-updated'));
+    } catch (err) {
+      console.error('Error marcando notificación:', err);
+    }
   };
 
   const handleImgError = (e) => {
@@ -155,19 +161,11 @@ const Header = () => {
           </Box>
 
           {user && (
-            user.role === 'driver' ? (
-              <IconButton color="inherit" onClick={openNotifs} size="large" sx={{ mr: 1 }}>
-                <Badge badgeContent={unreadCount} color="error">
-                  <NotificationsIcon />
-                </Badge>
-              </IconButton>
-            ) : (
-              <IconButton color="inherit" onClick={() => navigate('/notifications')} size="large" sx={{ mr: 1 }}>
-                <Badge badgeContent={unreadCount} color="error">
-                  <NotificationsIcon />
-                </Badge>
-              </IconButton>
-            )
+            <IconButton color="inherit" onClick={handleBellClick} size="large" sx={{ mr: 1 }}>
+              <Badge badgeContent={unreadCount} color="error">
+                <NotificationsIcon />
+              </Badge>
+            </IconButton>
           )}
 
           <IconButton color="inherit" onClick={handleAvatarClick} size="large">
@@ -199,15 +197,15 @@ const Header = () => {
         </Box>
       </Drawer>
 
-      {/* Menu de notificaciones para drivers */}
-      <Menu anchorEl={anchorNotif} open={Boolean(anchorNotif)} onClose={closeNotifs} PaperProps={{ style: { maxHeight: 320, width: 360, padding: 0 } }}>
+      {/* (Legacy) menu de notificaciones: se mantiene para compatibilidad, pero la campana ahora abre /notifications */}
+      <Menu anchorEl={anchorNotif} open={Boolean(anchorNotif)} onClose={() => setAnchorNotif(null)} PaperProps={{ style: { maxHeight: 320, width: 360, padding: 0 } }}>
         {notifsLoading ? <Box sx={{ display:'flex', justifyContent:'center', p:2 }}><CircularProgress size={20} /></Box> :
           (notifications.length === 0 ? <MenuItem disabled>No hay notificaciones</MenuItem> :
             notifications.map(n => (
-              <MenuItem key={n.id} onClick={() => { if (!n.read) markReadLocal(n.id); closeNotifs(); }} sx={{ whiteSpace: 'normal', alignItems: 'flex-start' }}>
+              <MenuItem key={n.id} onClick={() => { if (!n.read) markReadLocal(n.id); setAnchorNotif(null); }} sx={{ whiteSpace: 'normal', alignItems: 'flex-start' }}>
                 <Box>
-                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{n.title || n.passenger_name || 'Evento'}</Typography>
-                  <Typography variant="body2" color="text.secondary">{n.body || (n.route_name ? `${n.route_name} • ` : '')}{n.amount ? `Bs ${parseFloat(n.amount).toFixed(2)}` : ''}</Typography>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{n.title || 'Evento'}</Typography>
+                  <Typography variant="body2" color="text.secondary">{n.body}</Typography>
                   <Typography variant="caption" color="text.secondary">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</Typography>
                 </Box>
               </MenuItem>

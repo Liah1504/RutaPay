@@ -113,6 +113,15 @@ const getDriverPaymentsSummary = async (req, res) => {
 
 /**
  * GET /api/drivers/notifications
+ *
+ * Antes: se construía la lista desde payments (no dependía de la tabla notifications),
+ * lo que hacía que marcar 'read' en notifications no afectara lo mostrado → parpadeo.
+ *
+ * Ahora: leemos desde la tabla notifications filtrada por user_id. Query params:
+ *   - limit (default 5)
+ *   - unread=true (opcional) => devuelve solo no leídas
+ *
+ * Devolvemos: id, title, body, data, read, created_at
  */
 const getDriverNotifications = async (req, res) => {
   try {
@@ -120,21 +129,28 @@ const getDriverNotifications = async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Usuario no autenticado' });
 
     const limit = parseInt(req.query.limit || '5', 10);
-    const q = `
-      SELECT p.id, p.amount, p.created_at,
-             COALESCE(u.name, 'Pasajero desconocido') AS passenger_name,
-             r.name AS route_name
-      FROM payments p
-      LEFT JOIN users u ON p.passenger_id = u.id
-      LEFT JOIN routes r ON p.route_id = r.id
-      WHERE p.driver_id = $1
-      ORDER BY p.created_at DESC
-      LIMIT $2
+    const unreadOnly = String(req.query.unread || 'false').toLowerCase() === 'true';
+
+    // Asegúrate que tu tabla notifications tenga las columnas:
+    // id, user_id, title, body, data (jsonb), read (boolean), created_at
+    // Si tu esquema usa otros nombres, ajusta la consulta.
+    const params = [userId, limit];
+    let q = `
+      SELECT id, title, body, data, read, created_at
+      FROM notifications
+      WHERE user_id = $1
     `;
-    const result = await db.query(q, [userId, limit]);
+
+    if (unreadOnly) {
+      q += ` AND read = false`;
+    }
+
+    q += ` ORDER BY created_at DESC LIMIT $2`;
+
+    const result = await db.query(q, params);
     return res.json(result.rows);
   } catch (err) {
-    console.error('getDriverNotifications error:', err);
+    console.error('getDriverNotifications error:', err && (err.stack || err.message || err));
     return res.status(500).json({ error: 'Error al obtener notificaciones' });
   }
 };

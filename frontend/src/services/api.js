@@ -55,12 +55,15 @@ export const driverAPI = {
   getProfile: () => axios.get('/drivers/profile'),
   getPayments: () => axios.get('/drivers/payments'),
   getPaymentsSummary: (date) => axios.get('/drivers/payments/summary', { params: { date } }),
-  getNotifications: (limit = 5) => axios.get('/drivers/notifications', { params: { limit } }),
+  // Cambiado: obtener notificaciones desde la tabla común /notifications
+  // params: limit (int), unread (bool)
+  getNotifications: (limit = 5, unread = false) => axios.get('/notifications', { params: { limit, unread } }),
   updateProfile: (data) => axios.put('/drivers/profile', data)
 };
 
 export const notificationsAPI = {
-  getLatestForDriver: (limit = 10) => axios.get('/drivers/notifications', { params: { limit } }),
+  // Para driver: obtener sólo no leídas por defecto
+  getLatestForDriver: (limit = 10) => axios.get('/notifications', { params: { limit, unread: true } }),
   markAsRead: (id) => axios.put(`/notifications/${id}/read`),
   getForUser: (limit = 20) => axios.get('/notifications', { params: { limit } }),
   getForAdmin: (limit = 50, type = null) => axios.get('/notifications/admin', { params: { limit, type } })
