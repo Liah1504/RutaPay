@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Paper, Typography, Button, Box, Card, CardContent, Grid, Alert, Chip,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField, CircularProgress, Divider,
-  TableContainer, Table, TableHead, TableRow, TableCell, TableBody
+  TableContainer, Table, TableHead, TableRow, TableCell, TableBody, Snackbar
 } from '@mui/material';
 import { Phone, LocationOn, PersonPinCircle } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,6 +27,10 @@ const PassengerDashboard = () => {
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
   const [driverCode, setDriverCode] = useState(''); // Código del conductor que escribe el pasajero
   const [paymentError, setPaymentError] = useState('');
+
+  // Snackbar local para confirmar pago (ventana solicitada)
+  const [paymentSnackOpen, setPaymentSnackOpen] = useState(false);
+  const [paymentSnackMsg, setPaymentSnackMsg] = useState('');
 
   // Estados para recarga
   const [showRecharge, setShowRecharge] = useState(false);
@@ -186,17 +190,25 @@ const PassengerDashboard = () => {
     setLoadingAction(true);
     setPaymentError('');
     try {
-      await paymentAPI.executePayment({
+      // Ejecutar el pago en backend
+      const resp = await paymentAPI.executePayment({
         route_id: selectedRoute.id,
         driver_code: driverCode
       });
 
-      setMessage('¡Pago realizado exitosamente!');
       // refrescar historial de viajes, pagos y saldo
       await fetchPassengerTrips();
       await fetchPayments(filterDate || undefined);
       try { await fetchAndUpdateUser(); } catch (e) { /* no crítico */ }
 
+      // Forzar que Header recargue notifs y muestre toast desde BD
+      window.dispatchEvent(new Event('notifications-updated'));
+
+      // Mostrar snackbar local indicando éxito (ventana solicitada)
+      setPaymentSnackMsg('Viaje pagado');
+      setPaymentSnackOpen(true);
+
+      // Cerrar modal y limpiar
       closePaymentDialog();
     } catch (error) {
       const errorMsg = error.response?.data?.error || 'Error al procesar el pago.';
@@ -508,6 +520,18 @@ const PassengerDashboard = () => {
         </Dialog>
 
       </Container>
+
+      {/* Snackbar local que confirma "Viaje pagado" */}
+      <Snackbar
+        open={paymentSnackOpen}
+        autoHideDuration={3500}
+        onClose={() => setPaymentSnackOpen(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert onClose={() => setPaymentSnackOpen(false)} severity="success" sx={{ width: '100%' }}>
+          {paymentSnackMsg}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

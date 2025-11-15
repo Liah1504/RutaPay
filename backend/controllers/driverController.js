@@ -1,6 +1,40 @@
 const db = require('../config/database');
 
 /**
+ * Helper: resolver driverId
+ * - Si se pasa driver_code en query o como parámetro, intenta buscar por driver_code.
+ * - Si no, usa el usuario autenticado (req.user.id) para buscar drivers.user_id.
+ * - Devuelve driverId (number) o lanza un error con status/message para respuestas HTTP.
+ */
+const resolveDriverId = async (req) => {
+  const driverCode = req.query?.driver_code || req.params?.driver_code;
+  if (driverCode) {
+    const drvRes = await db.query('SELECT id, user_id FROM drivers WHERE driver_code = $1 LIMIT 1', [driverCode]);
+    if (drvRes.rows.length === 0) {
+      const err = new Error('No se encontró conductor con driver_code proporcionado');
+      err.status = 404;
+      throw err;
+    }
+    return drvRes.rows[0].id;
+  }
+
+  const userId = req.user && req.user.id;
+  if (!userId) {
+    const err = new Error('Usuario no autenticado');
+    err.status = 401;
+    throw err;
+  }
+
+  const drvByUser = await db.query('SELECT id FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+  if (drvByUser.rows.length === 0) {
+    const err = new Error('No se encontró perfil de conductor para este usuario');
+    err.status = 404;
+    throw err;
+  }
+  return drvByUser.rows[0].id;
+};
+
+/**
  * GET /api/drivers/profile
  */
 const getDriverProfile = async (req, res) => {
@@ -22,18 +56,20 @@ const getDriverProfile = async (req, res) => {
     }
     return res.json(result.rows[0]);
   } catch (err) {
-    console.error('getDriverProfile error:', err);
+    console.error('getDriverProfile error:', err && (err.stack || err.message || err));
     return res.status(500).json({ error: 'Error al obtener perfil' });
   }
 };
 
 /**
  * GET /api/drivers/payments
+ *
+ * Ahora resuelve el driverId correctamente (por driver_code o por user_id -> drivers.id)
+ * y usa ese driverId para recuperar los pagos.
  */
 const getDriverPayments = async (req, res) => {
   try {
-    const userId = req.user && req.user.id;
-    if (!userId) return res.status(401).json({ error: 'Usuario no autenticado' });
+    const driverId = await resolveDriverId(req);
 
     const q = `
       SELECT p.id, p.amount, p.created_at,
@@ -47,25 +83,26 @@ const getDriverPayments = async (req, res) => {
       ORDER BY p.created_at DESC
       LIMIT 500
     `;
-    const result = await db.query(q, [userId]);
+    const result = await db.query(q, [driverId]);
     return res.json(result.rows);
   } catch (err) {
-    console.error('getDriverPayments error:', err);
-    return res.status(500).json({ error: 'Error al obtener el historial de pagos' });
+    console.error('getDriverPayments error:', err && (err.stack || err.message || err));
+    const status = err && err.status ? err.status : 500;
+    return res.status(status).json({ error: err.message || 'Error al obtener el historial de pagos' });
   }
 };
 
 /**
  * GET /api/drivers/payments/summary?date=YYYY-MM-DD
  * Usa rango [date, date + 1) para evitar problemas con zonas horarias.
+ * Resuelve driverId de forma robusta.
  */
 const getDriverPaymentsSummary = async (req, res) => {
   try {
-    const userId = req.user && req.user.id;
-    if (!userId) return res.status(401).json({ error: 'Usuario no autenticado' });
+    const driverId = await resolveDriverId(req);
 
     const date = req.query.date || new Date().toISOString().slice(0, 10);
-    console.log('getDriverPaymentsSummary -> userId:', userId, 'date:', date);
+    console.log('getDriverPaymentsSummary -> driverId:', driverId, 'date:', date);
 
     const qTotals = `
       SELECT r.id AS route_id, r.name AS route_name, COALESCE(SUM(p.amount), 0)::numeric(10,2) AS total
@@ -79,7 +116,7 @@ const getDriverPaymentsSummary = async (req, res) => {
       HAVING COALESCE(SUM(p.amount), 0) > 0
       ORDER BY total DESC
     `;
-    const totalsRes = await db.query(qTotals, [userId, date]);
+    const totalsRes = await db.query(qTotals, [driverId, date]);
 
     const totalRes = await db.query(
       `SELECT COALESCE(SUM(amount),0)::numeric(10,2) AS total
@@ -87,7 +124,7 @@ const getDriverPaymentsSummary = async (req, res) => {
        WHERE driver_id = $1
          AND created_at >= $2::date
          AND created_at < ($2::date + INTERVAL '1 day')`,
-      [userId, date]
+      [driverId, date]
     );
 
     const passengersRes = await db.query(
@@ -96,7 +133,7 @@ const getDriverPaymentsSummary = async (req, res) => {
        WHERE driver_id = $1
          AND created_at >= $2::date
          AND created_at < ($2::date + INTERVAL '1 day')`,
-      [userId, date]
+      [driverId, date]
     );
 
     return res.json({
@@ -106,22 +143,16 @@ const getDriverPaymentsSummary = async (req, res) => {
       unique_passengers: passengersRes.rows[0].unique_passengers || 0
     });
   } catch (err) {
-    console.error('getDriverPaymentsSummary error:', err);
-    return res.status(500).json({ error: 'Error al obtener resumen de pagos' });
+    console.error('getDriverPaymentsSummary error:', err && (err.stack || err.message || err));
+    const status = err && err.status ? err.status : 500;
+    return res.status(status).json({ error: err.message || 'Error al obtener resumen de pagos' });
   }
 };
 
 /**
  * GET /api/drivers/notifications
  *
- * Antes: se construía la lista desde payments (no dependía de la tabla notifications),
- * lo que hacía que marcar 'read' en notifications no afectara lo mostrado → parpadeo.
- *
- * Ahora: leemos desde la tabla notifications filtrada por user_id. Query params:
- *   - limit (default 5)
- *   - unread=true (opcional) => devuelve solo no leídas
- *
- * Devolvemos: id, title, body, data, read, created_at
+ * Leemos desde la tabla notifications filtrada por user_id.
  */
 const getDriverNotifications = async (req, res) => {
   try {
@@ -131,9 +162,6 @@ const getDriverNotifications = async (req, res) => {
     const limit = parseInt(req.query.limit || '5', 10);
     const unreadOnly = String(req.query.unread || 'false').toLowerCase() === 'true';
 
-    // Asegúrate que tu tabla notifications tenga las columnas:
-    // id, user_id, title, body, data (jsonb), read (boolean), created_at
-    // Si tu esquema usa otros nombres, ajusta la consulta.
     const params = [userId, limit];
     let q = `
       SELECT id, title, body, data, read, created_at

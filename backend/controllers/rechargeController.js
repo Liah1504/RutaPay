@@ -1,180 +1,319 @@
 const db = require('../config/database');
 
-// =============================================
-// FUNCIÓN 1: createRecharge (Registra la Solicitud)
-// - Inserta recarga y crea una notificación con data.type = 'recharge_pending'
-// =============================================
+const isDev = process.env.NODE_ENV !== 'production';
+
+/**
+ * createRecharge
+ * POST /api/recharges
+ * Crea una recarga en estado 'pendiente' y notifica a usuario/admins.
+ */
 const createRecharge = async (req, res) => {
   const userId = req.user?.id;
-  const { amount, date, reference } = req.body;
-
   if (!userId) return res.status(401).json({ error: 'No autorizado' });
-  if (!amount || !date || !reference) {
-    return res.status(400).json({ error: "Todos los campos son requeridos." });
-  }
+
+  const { amount, reference } = req.body;
+  if (!amount) return res.status(400).json({ error: 'Amount es requerido' });
 
   try {
-    const result = await db.query(
-      `INSERT INTO recharges (user_id, amount, date, reference, status, created_at)
-       VALUES ($1, $2, $3, $4, 'pendiente', now())
-       RETURNING *`,
-      [userId, amount, date, reference]
-    );
+    // Insertar la recarga con estado en español ('pendiente')
+    const insertQ = `
+      INSERT INTO recharges (user_id, amount, reference, status, created_at)
+      VALUES ($1, $2, $3, 'pendiente', NOW())
+      RETURNING *
+    `;
+    const r = await db.query(insertQ, [userId, amount, reference || null]);
+    const recharge = r.rows[0];
 
-    const recharge = result.rows[0];
-
-    // Crear notificación para administradores / registro
+    // Notificar al usuario (mensaje amigable)
     try {
-      const title = 'Nueva recarga pendiente';
-      const body = `El usuario ID ${userId} solicitó una recarga de Bs ${parseFloat(amount).toFixed(2)} (ref ${reference}).`;
-      const data = { type: 'recharge_pending', recharge_id: recharge.id, amount, reference, user_id: userId };
+      const titleUser = 'Recarga enviada';
+      const bodyUser = `Tu recarga de Bs ${parseFloat(amount).toFixed(2)} (ref ${reference || '—'}) fue enviada y está pendiente de aprobación.`;
+      const dataUser = { type: 'recharge_pending', recharge_id: recharge.id, amount, reference, user_id: userId };
 
       await db.query(
         `INSERT INTO notifications (user_id, title, body, data, read, created_at)
-         VALUES ($1, $2, $3, $4, false, now())`,
-        [userId, title, body, JSON.stringify(data)]
+         VALUES ($1, $2, $3, $4::jsonb, false, now())`,
+        [userId, titleUser, bodyUser, JSON.stringify(dataUser)]
       );
-    } catch (notifErr) {
-      console.warn('[createRecharge] No se pudo crear notificación de recarga pendiente:', notifErr && (notifErr.stack || notifErr.message || notifErr));
+    } catch (notifUserErr) {
+      console.warn('createRecharge: fallo creando notificación usuario:', notifUserErr && (notifUserErr.stack || notifUserErr.message || notifUserErr));
     }
 
-    res.status(201).json(recharge);
+    // Notificar a administradores
+    try {
+      const titleAdmin = 'Nueva recarga pendiente';
+      const bodyAdmin = `El usuario ID ${userId} solicitó una recarga de Bs ${parseFloat(amount).toFixed(2)} (ref ${reference || '—'}).`;
+      const dataAdmin = { type: 'recharge_pending', recharge_id: recharge.id, amount, reference, user_id: userId };
+
+      const adminsRes = await db.query(`SELECT id FROM users WHERE role = 'admin'`);
+      const admins = adminsRes.rows || [];
+      for (const a of admins) {
+        try {
+          await db.query(
+            `INSERT INTO notifications (user_id, title, body, data, read, created_at)
+             VALUES ($1, $2, $3, $4::jsonb, false, now())`,
+            [a.id, titleAdmin, bodyAdmin, JSON.stringify(dataAdmin)]
+          );
+        } catch (perAdminErr) {
+          console.warn('createRecharge: fallo creando notificación admin para user_id=', a.id, perAdminErr && (perAdminErr.message || perAdminErr));
+        }
+      }
+    } catch (notifAdminErr) {
+      console.warn('createRecharge: error generando notificaciones admin:', notifAdminErr && (notifAdminErr.stack || notifAdminErr.message || notifAdminErr));
+    }
+
+    return res.status(201).json(recharge);
   } catch (error) {
-    console.error('❌ Error guardando recarga:', error && (error.stack || error.message || error));
-    res.status(500).json({ error: 'Error interno al guardar la recarga.' });
+    console.error('createRecharge error:', error && (error.stack || error.message || error));
+
+    // Si el error es por la constraint de status, intentamos fallback sin especificar status
+    const msg = String(error && (error.message || error));
+    if (msg.toLowerCase().includes('viol') && msg.toLowerCase().includes('status')) {
+      try {
+        console.warn('createRecharge: fallo por CHECK status -> intentando INSERT sin status para usar el default de BD');
+        const insertQ2 = `
+          INSERT INTO recharges (user_id, amount, reference, created_at)
+          VALUES ($1, $2, $3, NOW())
+          RETURNING *
+        `;
+        const r2 = await db.query(insertQ2, [userId, amount, reference || null]);
+        const recharge2 = r2.rows[0];
+
+        // Notificar usuario/admin (opcional) - intentar en background
+        try {
+          const titleUser = 'Recarga enviada';
+          const bodyUser = `Tu recarga de Bs ${parseFloat(amount).toFixed(2)} (ref ${reference || '—'}) fue enviada y está pendiente de aprobación.`;
+          const dataUser = { type: 'recharge_pending', recharge_id: recharge2.id, amount, reference, user_id: userId };
+          await db.query(
+            `INSERT INTO notifications (user_id, title, body, data, read, created_at)
+             VALUES ($1, $2, $3, $4::jsonb, false, now())`,
+            [userId, titleUser, bodyUser, JSON.stringify(dataUser)]
+          );
+        } catch (notifUserErr) {
+          console.warn('createRecharge (fallback): no se pudo crear notificación para usuario', notifUserErr && (notifUserErr.message || notifUserErr));
+        }
+
+        return res.status(201).json(recharge2);
+      } catch (err2) {
+        console.error('createRecharge (fallback) ERROR:', err2 && (err2.stack || err2.message || err2));
+        return res.status(500).json({ error: 'Error guardando recarga (fallback)', details: err2 && (err2.message || String(err2)) });
+      }
+    }
+
+    return res.status(500).json({ error: 'Error guardando recarga', details: msg });
   }
 };
 
-// =============================================
-// FUNCIÓN 2: getPendingRecharges (Admin)
-// =============================================
+
+/**
+ * getPendingRecharges
+ * GET /api/recharges/pending
+ * Devuelve recargas pendientes (admin)
+ */
 const getPendingRecharges = async (req, res) => {
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'No autorizado' });
   try {
     const result = await db.query(
-      `SELECT r.*, u.name as user_name, u.email as user_email
+      `SELECT r.id, r.user_id, u.name AS user_name, u.email AS user_email,
+              r.amount, r.reference, r.status, r.created_at
        FROM recharges r
-       JOIN users u ON r.user_id = u.id
+       LEFT JOIN users u ON u.id = r.user_id
        WHERE r.status = 'pendiente'
-       ORDER BY r.created_at ASC`
+       ORDER BY r.created_at DESC
+       LIMIT 200`
     );
-    res.json(result.rows);
+    return res.json(result.rows);
   } catch (error) {
-    console.error('❌ Error listando recargas:', error && (error.stack || error.message || error));
-    res.status(500).json({ error: 'Error listando recargas' });
+    console.error('getPendingRecharges error:', error && (error.stack || error.message || error));
+    return res.status(500).json({ error: 'Error obteniendo recargas pendientes' });
   }
 };
 
-// =============================================
-// FUNCIÓN 3: confirmRecharge (Admin)
-// - Marca recarga como confirmada, suma saldo al usuario
-// - Crea notificación para el usuario con data.type = 'recharge_confirmed'
-// Nota: no usamos updated_at para evitar error si la columna no existe
-// =============================================
+
+/**
+ * confirmRecharge
+ * PUT /api/recharges/:id/confirm
+ * Admin confirma la recarga: actualiza status = 'confirmada', aplica monto al saldo del usuario
+ * y notifica al usuario. El proceso es transaccional e intenta ser idempotente (no perder datos).
+ */
 const confirmRecharge = async (req, res) => {
-  const { id } = req.params;
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+
+  const rechargeId = parseInt(req.params.id, 10);
+  if (Number.isNaN(rechargeId)) return res.status(400).json({ error: 'ID inválido' });
 
   try {
-    // Marcar la recarga como confirmada
-    const rec = await db.query(
-      `UPDATE recharges
-       SET status='confirmada'
-       WHERE id=$1
-       RETURNING *`,
-      [id]
-    );
+    await db.query('BEGIN');
 
-    if (rec.rows.length === 0) {
+    // Lock the recharge row
+    const recRes = await db.query('SELECT id, user_id, amount, reference, status FROM recharges WHERE id = $1 FOR UPDATE', [rechargeId]);
+    if (recRes.rows.length === 0) {
+      await db.query('ROLLBACK');
       return res.status(404).json({ error: 'Recarga no encontrada' });
     }
+    const rec = recRes.rows[0];
 
-    const recharge = rec.rows[0];
-    const amount = parseFloat(recharge.amount);
-    const userId = recharge.user_id;
-
-    // Sumar al balance del usuario
-    await db.query(
-      `UPDATE users SET balance = COALESCE(balance,0) + $1 WHERE id = $2`,
-      [amount, userId]
-    );
-
-    // Crear notificación para el pasajero confirmando la recarga
+    // Determine whether we have already applied the amount.
+    // Strategy:
+    // 1) If table has 'applied' column, use it.
+    // 2) Else, look for an existing 'recharge_confirmed' notification for this recharge_id.
+    let applied = false;
     try {
-      const title = 'Recarga confirmada';
-      const body = `Tu recarga de Bs ${amount.toFixed(2)} ha sido confirmada y sumada a tu balance.`;
-      const data = { type: 'recharge_confirmed', recharge_id: recharge.id, amount, user_id: userId };
+      const colCheck = await db.query(
+        `SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'recharges' AND column_name = 'applied' LIMIT 1`
+      );
+      if (colCheck.rows.length > 0) {
+        // read applied flag
+        const aRes = await db.query('SELECT applied FROM recharges WHERE id = $1', [rechargeId]);
+        applied = !!aRes.rows[0].applied;
+      } else {
+        // no applied column; check notifications for a confirmed notification for this recharge
+        const notifCheck = await db.query(
+          `SELECT 1 FROM notifications
+           WHERE (data->>'recharge_id') = $1::text
+             AND (data->>'type' = 'recharge_confirmed' OR title ILIKE '%Recarga confirmada%')
+           LIMIT 1`, [String(rechargeId)]
+        );
+        applied = notifCheck.rows.length > 0;
+      }
+    } catch (innerErr) {
+      // if any error checking columns/notifications, assume not applied (safe fallback)
+      console.warn('confirmRecharge: warning checking applied/notif state:', innerErr && (innerErr.message || innerErr));
+      applied = false;
+    }
+
+    // If already applied (balance updated) and status is confirmada, nothing to do
+    if (rec.status === 'confirmada' && applied) {
+      await db.query('COMMIT');
+      return res.json({ message: 'Recarga ya confirmada previamente' });
+    }
+
+    // Update recharge status and, if available, set applied = true and updated_at.
+    try {
+      // Try to perform an update that sets applied and updated_at if possible.
+      await db.query(
+        `UPDATE recharges
+         SET status = $1, applied = true, updated_at = now()
+         WHERE id = $2`,
+        ['confirmada', rechargeId]
+      );
+    } catch (e) {
+      // Fallback if columns do not exist (applied/updated_at)
+      await db.query('UPDATE recharges SET status = $1 WHERE id = $2', ['confirmada', rechargeId]);
+    }
+
+    // Apply amount to user's balance if not already applied
+    if (!applied) {
+      // Lock the user row and update balance
+      const userId = rec.user_id;
+      await db.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
 
       await db.query(
-        `INSERT INTO notifications (user_id, title, body, data, read, created_at)
-         VALUES ($1, $2, $3, $4, false, now())`,
-        [userId, title, body, JSON.stringify(data)]
+        `UPDATE users
+         SET balance = COALESCE(balance, 0) + $1
+         WHERE id = $2`,
+        [rec.amount, userId]
       );
-    } catch (notifErr) {
-      console.warn('[confirmRecharge] No se pudo crear notificación de recarga confirmada:', notifErr && (notifErr.stack || notifErr.message || notifErr));
+    } else {
+      // If already applied but status was not 'confirmada', we still ensure status set above.
+      // No balance modification to avoid double-apply.
     }
 
-    // Responder con la recarga actualizada
-    res.json({ message: 'Recarga confirmada y saldo sumado.', recharge: recharge });
-  } catch (error) {
-    console.error('❌ Error confirmando recarga:', error && (error.stack || error.message || error));
-    res.status(500).json({ error: 'Error confirmando recarga.' });
+    // Ensure there's a confirmation notification (insert only if not present)
+    try {
+      const notifExists = await db.query(
+        `SELECT 1 FROM notifications
+         WHERE (data->>'recharge_id') = $1::text
+           AND (data->>'type' = 'recharge_confirmed' OR title ILIKE '%Recarga confirmada%')
+         LIMIT 1`,
+        [String(rechargeId)]
+      );
+
+      if (notifExists.rows.length === 0) {
+        const title = 'Recarga confirmada';
+        const body = `Tu recarga de Bs ${parseFloat(rec.amount).toFixed(2)} (ref ${rec.reference || '—'}) ha sido aprobada y añadida a tu saldo.`;
+        const data = { type: 'recharge_confirmed', recharge_id: rec.id, amount: rec.amount, user_id: rec.user_id };
+
+        await db.query(
+          `INSERT INTO notifications (user_id, title, body, data, read, created_at)
+           VALUES ($1, $2, $3, $4::jsonb, false, now())`,
+          [rec.user_id, title, body, JSON.stringify(data)]
+        );
+      }
+    } catch (notifErr) {
+      console.warn('confirmRecharge: no se pudo crear notificación de confirmación:', notifErr && (notifErr.stack || notifErr.message || notifErr));
+      // no rollback por fallo de notificación
+    }
+
+    await db.query('COMMIT');
+    return res.json({ message: 'Recarga confirmada y saldo actualizado' });
+  } catch (err) {
+    try { await db.query('ROLLBACK'); } catch (_) {}
+    console.error('confirmRecharge error:', err && (err.stack || err.message || err));
+    return res.status(500).json({ error: 'Error confirmando recarga' });
   }
 };
 
-// =============================================
-// FUNCIÓN 4: rejectRecharge (Admin)
-// - Actualiza status -> 'rechazada'
-// - Guarda rejected_reason en recharges.rejected_reason
-// - Crea una notificación para el usuario con la razón (data.type = 'recharge_rejected')
-// =============================================
+
+/**
+ * rejectRecharge
+ * POST /api/recharges/:id/reject
+ * Admin rechaza la recarga: actualiza estado = 'rechazada' y notifica al usuario.
+ * This function will not alter user balances. It's safe and will try to preserve existing data.
+ */
 const rejectRecharge = async (req, res) => {
-  const { id } = req.params;
-  const { reason } = req.body;
-  if (!reason || reason.trim().length === 0) {
-    return res.status(400).json({ error: 'La razón del rechazo es requerida.' });
-  }
+  if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'No autorizado' });
+
+  const rechargeId = parseInt(req.params.id, 10);
+  const { reason } = req.body || {};
+  if (Number.isNaN(rechargeId)) return res.status(400).json({ error: 'ID inválido' });
 
   try {
-    const rec = await db.query(
-      `UPDATE recharges
-       SET status='rechazada', rejected_reason=$1
-       WHERE id=$2
-       RETURNING *`,
-      [reason, id]
-    );
+    await db.query('BEGIN');
 
-    if (rec.rows.length === 0) {
+    const recRes = await db.query('SELECT id, user_id, amount, reference, status FROM recharges WHERE id = $1 FOR UPDATE', [rechargeId]);
+    if (recRes.rows.length === 0) {
+      await db.query('ROLLBACK');
       return res.status(404).json({ error: 'Recarga no encontrada' });
     }
+    const rec = recRes.rows[0];
 
-    const recharge = rec.rows[0];
-    const userId = recharge.user_id;
+    // Update status to 'rechazada' (try with updated_at if available)
+    try {
+      await db.query('UPDATE recharges SET status = $1, updated_at = now() WHERE id = $2', ['rechazada', rechargeId]);
+    } catch (e) {
+      await db.query('UPDATE recharges SET status = $1 WHERE id = $2', ['rechazada', rechargeId]);
+    }
 
-    // Crear notificación para el usuario
+    // Insert a rejection notification (do not rollback if notification fails)
     try {
       const title = 'Recarga rechazada';
-      const body = `Tu recarga de Bs ${parseFloat(recharge.amount).toFixed(2)} ha sido rechazada. Razón: ${reason}`;
-      const data = { type: 'recharge_rejected', recharge_id: recharge.id, amount: recharge.amount, reason, user_id: userId };
+      const body = `Tu recarga de Bs ${parseFloat(rec.amount).toFixed(2)} (ref ${rec.reference || '—'}) fue rechazada. Razón: ${reason || 'No especificada'}.`;
+      const data = { type: 'recharge_rejected', recharge_id: rec.id, amount: rec.amount, reason: reason || null, user_id: rec.user_id };
 
       await db.query(
         `INSERT INTO notifications (user_id, title, body, data, read, created_at)
-         VALUES ($1, $2, $3, $4, false, now())`,
-        [userId, title, body, JSON.stringify(data)]
+         VALUES ($1, $2, $3, $4::jsonb, false, now())`,
+        [rec.user_id, title, body, JSON.stringify(data)]
       );
     } catch (notifErr) {
-      console.warn('❗ No se pudo crear notificación (pero el rechazo fue aplicado):', notifErr && (notifErr.stack || notifErr.message || notifErr));
+      console.warn('rejectRecharge: no se pudo crear notificación de rechazo:', notifErr && (notifErr.stack || notifErr.message || notifErr));
     }
 
-    res.json({ message: 'Recarga rechazada y usuario notificado.' });
+    await db.query('COMMIT');
+    return res.json({ message: 'Recarga rechazada y usuario notificado.' });
   } catch (error) {
-    console.error('❌ Error rechazando recarga:', error && (error.stack || error.message || error));
-    res.status(500).json({ error: 'Error rechazando recarga.' });
+    try { await db.query('ROLLBACK'); } catch (_) {}
+    console.error('rejectRecharge error:', error && (error.stack || error.message || error));
+    return res.status(500).json({ error: 'Error rechazando recarga.' });
   }
 };
 
-// =============================================
-// FUNCIÓN 5: getNotificationsForUser (Pasajero)
-// Endpoint: GET /api/notifications
-// =============================================
+
+/**
+ * getNotificationsForUser (helper)
+ */
 const getNotificationsForUser = async (req, res) => {
   const userId = req.user?.id;
   const limit = parseInt(req.query.limit || '20', 10);
@@ -191,14 +330,11 @@ const getNotificationsForUser = async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
-    console.error('❌ Error obteniendo notificaciones:', error && (error.stack || error.message || error));
+    console.error('getNotificationsForUser error:', error && (error.stack || error.message || error));
     res.status(500).json({ error: 'Error obteniendo notificaciones' });
   }
 };
 
-// =============================================
-// EXPORTACIONES
-// =============================================
 module.exports = {
   createRecharge,
   getPendingRecharges,

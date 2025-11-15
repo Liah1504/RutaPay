@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Container, Paper, Typography, Box, Grid, CircularProgress, TableContainer, Table,
-  TableHead, TableRow, TableCell, TableBody, Avatar, Chip, TextField, Alert, Snackbar
+  TableHead, TableRow, TableCell, TableBody, Avatar, Chip, TextField
 } from '@mui/material';
 import { Groups, MonetizationOn, TrendingUp } from '@mui/icons-material';
 import {
@@ -15,11 +15,7 @@ import { driverAPI } from '../services/api';
  * DriverDashboard — visual-only fixes for chart labels and avatar fallback.
  * Works with the AuthContext you provided (it expects useAuth() -> { user, ... }).
  *
- * - Wrapped X axis ticks (1-2 lines) with larger font so long route names read well.
- * - Increased chart container height and reduced bottom whitespace.
- * - Area fill to remove "big white hole" under the line.
- * - Forcing ResponsiveContainer remount when data arrives (chartKey) + small window.resize.
- * - Avatar resolution: prefer user.avatar then profile.avatar then inline DEFAULT_AVATAR.
+ * NOTE: removed local notification snackbar to avoid duplicate toasts.
  */
 
 // Inline SVG fallback avatar (no external files)
@@ -83,9 +79,6 @@ export default function DriverDashboard() {
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingTodaySummary, setLoadingTodaySummary] = useState(true);
   const [filterName, setFilterName] = useState('');
-  const [showNotifSnack, setShowNotifSnack] = useState(false);
-  const [notifMessage, setNotifMessage] = useState('');
-  const lastNotifIdRef = useRef(null);
 
   // force remount of ResponsiveContainer so Recharts recalculates dims
   const [chartKey, setChartKey] = useState(0);
@@ -106,11 +99,10 @@ export default function DriverDashboard() {
 
       try {
         const date = getLocalISODate();
-        const [profileRes, paymentsRes, summaryRes, notifRes] = await Promise.all([
+        const [profileRes, paymentsRes, summaryRes] = await Promise.all([
           driverAPI.getProfile().catch(() => ({ data: null })),
           driverAPI.getPayments().catch(() => ({ data: [] })),
           driverAPI.getPaymentsSummary(date).catch(() => ({ data: { totals: [], total: 0, passengers_count: 0 } })),
-          (user && user.role === 'driver') ? driverAPI.getNotifications(6).catch(() => ({ data: [] })) : Promise.resolve({ data: [] })
         ]);
 
         if (!mounted) return;
@@ -147,13 +139,6 @@ export default function DriverDashboard() {
         setChartKey(k => k + 1);
         setLoadingGraph(false);
 
-        const nots = Array.isArray(notifRes?.data) ? notifRes.data : [];
-        if (nots.length > 0 && (!lastNotifIdRef.current || nots[0].id !== lastNotifIdRef.current)) {
-          lastNotifIdRef.current = nots[0].id;
-          setNotifMessage(`Nuevo pago: ${nots[0].passenger_name || 'usuario'} - Bs ${parseFloat(nots[0].amount || 0).toFixed(2)}`);
-          setShowNotifSnack(true);
-        }
-
         // small delayed resize so Recharts picks up the final size
         setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch {} }, 80);
       } catch (err) {
@@ -189,9 +174,7 @@ export default function DriverDashboard() {
       <Header />
 
       <Container maxWidth="lg" sx={{ mt: 3, mb: 4 }}>
-        <Snackbar open={showNotifSnack} autoHideDuration={3500} onClose={() => setShowNotifSnack(false)} anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
-          <Alert severity="success">{notifMessage}</Alert>
-        </Snackbar>
+        {/* NOTE: local snackbar removed to avoid duplicate toasts with Header */}
 
         <Paper elevation={1} sx={{ bgcolor: '#0C2946', color: '#fff', p: 3, mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: 2 }}>
           <Box>

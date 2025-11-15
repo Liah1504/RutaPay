@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import IconButton from '@mui/material/IconButton';
@@ -46,6 +46,21 @@ const normalizeAvatarUrl = (url) => {
   }
 };
 
+// Helper para parsear amount seguro y formatearlo
+const parseAmount = (raw) => {
+  if (raw === undefined || raw === null) return 0;
+  let v = raw;
+  if (typeof v === 'object') {
+    // si viene en un objeto sorpresa, intenta extraer .amount
+    v = v.amount ?? v.value ?? 0;
+  }
+  if (typeof v === 'string') {
+    v = v.replace(',', '.').replace(/[^\d.-]/g, '');
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
 const Header = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -65,6 +80,18 @@ const Header = () => {
   // Snackbar for global messages (reads location.state.successMessage)
   const [snackOpen, setSnackOpen] = useState(false);
   const [snackMsg, setSnackMsg] = useState('');
+
+  // Snackbar específico para notificaciones entrantes
+  const [notifToastOpen, setNotifToastOpen] = useState(false);
+  const [notifToastMsg, setNotifToastMsg] = useState('');
+
+  // Dedupe helpers:
+  // - lastShownNotifId previene repetir por id de notificación
+  const lastShownNotifId = useRef(null);
+  // - shownPaymentIds previene mostrar 2 toasts para el mismo payment (si existe payment_id)
+  const shownPaymentIds = useRef(new Set());
+  // - shownMessages previene mostrar el mismo texto varias veces (por ejemplo si otro componente también muestra)
+  const shownMessages = useRef(new Set());
 
   useEffect(() => {
     // If navigation included a successMessage in state, show it
@@ -118,6 +145,79 @@ const Header = () => {
     window.addEventListener('notifications-updated', handler);
     return () => { clearInterval(iv); window.removeEventListener('notifications-updated', handler); };
   }, [loadNotifs]);
+
+  // Nuevo: mostrar toast emergente SOLO si hay una notificación NO LEÍDA o reciente que tenga amount > 0
+  useEffect(() => {
+    if (!notifications || notifications.length === 0) return;
+
+    // Helper para extraer amount numérico desde la notificación (data ó amount)
+    const getNotifData = (n) => {
+      let data = n.data;
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch (e) { data = {}; }
+      }
+      return data || {};
+    };
+
+    const getNotifAmount = (n) => {
+      const data = getNotifData(n);
+      return parseAmount(data.amount ?? n.amount ?? data.value ?? 0);
+    };
+
+    const getPaymentId = (n) => {
+      const data = getNotifData(n);
+      return data.payment_id ?? data.paymentId ?? data.id ?? null;
+    };
+
+    // 1) Buscar la última notificación NO LEÍDA con amount > 0
+    let latest = notifications.find(n => !n.read && getNotifAmount(n) > 0);
+
+    // 2) Si ninguna no-leída con amount>0, buscar la más reciente con amount>0 (aunque esté leída)
+    if (!latest) {
+      latest = notifications.find(n => getNotifAmount(n) > 0);
+    }
+
+    // 3) Si aún no hay notificación con amount>0, no mostramos nada
+    if (!latest) return;
+
+    // 4) Dedupe por payment_id si existe
+    const paymentId = getPaymentId(latest);
+    if (paymentId && shownPaymentIds.current.has(String(paymentId))) {
+      // Ya mostramos una notificación para este payment_id -> ignora
+      return;
+    }
+
+    // 5) Construir mensaje y dedupe por texto
+    const amountNum = getNotifAmount(latest);
+    const amountStr = amountNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const data = getNotifData(latest);
+    const passengerName = data.passenger_name || data.name || latest.passenger_name || 'usuario';
+    const title = latest.title || 'Nuevo pago';
+    const message = `${title}: ${passengerName} - Bs ${amountStr}`;
+
+    if (shownMessages.current.has(message)) {
+      // ya mostramos exactamente ese mensaje recientemente -> ignora
+      return;
+    }
+
+    // Marcar como mostrado para evitar duplicados:
+    if (paymentId) {
+      shownPaymentIds.current.add(String(paymentId));
+      // limpiar después de 30s (evita crecer indefinidamente)
+      setTimeout(() => shownPaymentIds.current.delete(String(paymentId)), 30000);
+    }
+    shownMessages.current.add(message);
+    setTimeout(() => shownMessages.current.delete(message), 10000);
+
+    // Evitar repetir la misma notificación por id
+    if (lastShownNotifId.current === latest.id) return;
+    lastShownNotifId.current = latest.id;
+
+    // Mostrar snackbar/toast
+    setNotifToastMsg(message);
+    setNotifToastOpen(true);
+    // no marcamos como leída automáticamente; el usuario puede abrir la campana y leer
+  }, [notifications]);
 
   const toggleDrawer = (v) => () => setOpen(v);
   const nav = (p) => { setOpen(false); navigate(p); };
@@ -223,6 +323,13 @@ const Header = () => {
       <Snackbar open={snackOpen} autoHideDuration={3500} onClose={() => setSnackOpen(false)} anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
         <Alert onClose={() => setSnackOpen(false)} severity="success" sx={{ width: '100%' }}>
           {snackMsg}
+        </Alert>
+      </Snackbar>
+
+      {/* Snackbar específico para notificación emergente (toast) */}
+      <Snackbar open={notifToastOpen} autoHideDuration={5000} onClose={() => setNotifToastOpen(false)} anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        <Alert onClose={() => setNotifToastOpen(false)} severity="success" sx={{ width: '100%' }}>
+          {notifToastMsg}
         </Alert>
       </Snackbar>
     </>
