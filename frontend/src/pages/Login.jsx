@@ -6,10 +6,16 @@ import {
   Button,
   Typography,
   Box,
-  Alert
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Snackbar
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { authAPI } from '../services/api';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -18,6 +24,54 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Estado para "Olvidaste tu contraseña"
+  const [forgotDialogOpen, setForgotDialogOpen] = useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [snack, setSnack] = useState({ open: false, msg: '', severity: 'info' });
+
+  const handleOpenForgot = () => { setForgotDialogOpen(true); setForgotEmail(''); };
+  const handleCloseForgot = () => setForgotDialogOpen(false);
+  const handleOpenReset = (email = '') => { setResetDialogOpen(true); setResetEmail(email); };
+  const handleCloseReset = () => setResetDialogOpen(false);
+
+  const doForgot = async () => {
+    if (!forgotEmail) {
+      setSnack({ open: true, msg: 'Introduce tu correo', severity: 'warning' });
+      return;
+    }
+    try {
+      await authAPI.forgotPassword(forgotEmail);
+      setSnack({ open: true, msg: 'Si existe la cuenta, se envió un código al correo.', severity: 'success' });
+      setForgotDialogOpen(false);
+      // abrir modal de reset (opcional) pre-llenando email
+      setTimeout(() => handleOpenReset(forgotEmail), 400);
+    } catch (err) {
+      console.error('forgot error', err);
+      setSnack({ open: true, msg: err?.response?.data?.error || 'Error enviando código', severity: 'error' });
+    }
+  };
+
+  const doReset = async () => {
+    if (!resetEmail || !resetCode || !resetPasswordValue) {
+      setSnack({ open: true, msg: 'Completa todos los campos', severity: 'warning' });
+      return;
+    }
+    try {
+      await authAPI.resetPassword({ email: resetEmail, code: resetCode, password: resetPasswordValue });
+      setSnack({ open: true, msg: 'Contraseña actualizada. Inicia sesión.', severity: 'success' });
+      setResetDialogOpen(false);
+      // opcional: vaciar campos
+      setResetCode(''); setResetPasswordValue('');
+    } catch (err) {
+      console.error('reset error', err);
+      setSnack({ open: true, msg: err?.response?.data?.error || 'Error reestableciendo contraseña', severity: 'error' });
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -62,41 +116,37 @@ const Login = () => {
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: '100vh', // Ocupa toda la altura de la pantalla
-      // --- CAMBIOS PARA LA IMAGEN DE FONDO ---
+      minHeight: '100vh',
       backgroundImage: 'url(/city_background.png)',
-      backgroundSize: 'contain', // <-- CAMBIO CLAVE: 'contain' para que no se estire
+      backgroundSize: 'contain',
       backgroundPosition: 'center',
-      backgroundRepeat: 'repeat', // <-- CAMBIO CLAVE: 'repeat' para duplicar si es necesario
-      // --- CAPA SEMI-TRANSPARENTE SOBRE LA IMAGEN ---
-      backgroundColor: 'rgba(255, 255, 255, 0.6)', // Un poco más de blanco para que el blur se note más
-      backdropFilter: 'blur(8px)', // <-- AUMENTA EL EFECTO DE BLUR
-      position: 'relative', // Necesario para el backdrop-filter
-      zIndex: 1, // Asegura que el backdrop-filter funcione correctamente
-      '&::before': { // Una capa extra de color para el fondo
+      backgroundRepeat: 'repeat',
+      backgroundColor: 'rgba(255, 255, 255, 0.6)',
+      backdropFilter: 'blur(8px)',
+      position: 'relative',
+      zIndex: 1,
+      '&::before': {
         content: '""',
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
         bottom: 0,
-        backgroundColor: 'rgba(230, 235, 240, 0.4)', // Color base más claro para el fondo
-        zIndex: -1, // Detrás de todo lo demás
+        backgroundColor: 'rgba(230, 235, 240, 0.4)',
+        zIndex: -1,
       },
     }}>
-      {/* La tarjeta (Paper) con un fondo blanco semi-transparente */}
       <Paper elevation={6} sx={{
         padding: 4,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         width: '100%',
-        maxWidth: '400px', // Límite de ancho para el formulario
-        backgroundColor: 'rgba(255, 255, 255, 0.9)', // Sigue siendo el fondo del formulario
-        borderRadius: 3, // Bordes más redondeados
-        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)', // Sombra más suave
+        maxWidth: '400px',
+        backgroundColor: 'rgba(255, 255, 255, 0.9)',
+        borderRadius: 3,
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.1)',
       }}>
-        {/* Usamos tu logo. Debe estar en /public/logo.png */}
         <img src="/logo.png" alt="RutaPay Logo" style={{ height: '50px', marginBottom: '16px' }} />
         
         <Typography component="h1" variant="h5" gutterBottom sx={{color: 'primary.main', fontWeight: 600}}>
@@ -131,16 +181,55 @@ const Login = () => {
             fullWidth
             variant="contained"
             color="primary" 
-            sx={{ mt: 3, mb: 2, py: 1.5, borderRadius: 2 }} // Bordes más redondeados para el botón
+            sx={{ mt: 3, mb: 2, py: 1.5, borderRadius: 2 }}
             disabled={loading}
           >
             {loading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
           </Button>
+
           <Button fullWidth variant="text" onClick={() => navigate('/register')} sx={{borderRadius: 2}}>
             ¿No tienes cuenta? Regístrate
           </Button>
+
+          <Button fullWidth variant="text" onClick={handleOpenForgot} sx={{ mt: 1, borderRadius: 2 }}>
+            ¿Olvidaste tu contraseña?
+          </Button>
         </Box>
       </Paper>
+
+      {/* Dialog: solicitar código */}
+      <Dialog open={forgotDialogOpen} onClose={handleCloseForgot}>
+        <DialogTitle>Recuperar contraseña</DialogTitle>
+        <DialogContent>
+          <TextField label="Correo" type="email" fullWidth value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} />
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Te enviaremos un código al correo para reestablecer tu contraseña.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseForgot}>Cancelar</Button>
+          <Button variant="contained" onClick={doForgot}>Enviar código</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Dialog: reestablecer con código */}
+      <Dialog open={resetDialogOpen} onClose={handleCloseReset}>
+        <DialogTitle>Reestablecer contraseña</DialogTitle>
+        <DialogContent>
+          <TextField label="Correo" type="email" fullWidth value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} sx={{ mb: 1 }} />
+          <TextField label="Código" fullWidth value={resetCode} onChange={(e) => setResetCode(e.target.value)} sx={{ mb: 1 }} />
+          <TextField label="Nueva contraseña" type="password" fullWidth value={resetPasswordValue} onChange={(e) => setResetPasswordValue(e.target.value)} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseReset}>Cancelar</Button>
+          <Button variant="contained" onClick={doReset}>Reestablecer</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Snackbar */}
+      <Snackbar open={snack.open} autoHideDuration={4500} onClose={() => setSnack(s => ({ ...s, open: false }))} anchorOrigin={{ vertical: 'top', horizontal: 'right' }}>
+        <Alert onClose={() => setSnack(s => ({ ...s, open: false }))} severity={snack.severity}>{snack.msg}</Alert>
+      </Snackbar>
     </Container>
   );
 };

@@ -82,8 +82,11 @@ router.get('/', authenticateToken, async (req, res) => {
     const joinClauses = [];
     const extraSelects = [];
     if (hasDriverId) {
-      joinClauses.push('LEFT JOIN users d ON d.id = p.driver_id');
-      extraSelects.push('d.name AS driver_name');
+      // CORRECCIÓN: resolver el nombre del conductor a través de drivers -> users
+      // en vez de unir directamente users ON p.driver_id (que puede devolver el nombre de un user si driver_id coincide con users.id)
+      joinClauses.push('LEFT JOIN drivers d ON d.id = p.driver_id');
+      joinClauses.push('LEFT JOIN users du ON du.id = d.user_id');
+      extraSelects.push('du.name AS driver_name');
     }
     if (hasRouteId) {
       joinClauses.push('LEFT JOIN routes r ON r.id = p.route_id');

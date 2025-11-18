@@ -28,7 +28,10 @@ export const userAPI = {
 
 export const authAPI = {
   login: (email, password) => axios.post('/auth/login', { email, password }),
-  register: (userData) => axios.post('/auth/register', userData)
+  register: (userData) => axios.post('/auth/register', userData),
+  // Nuevos endpoints para recuperación de contraseña
+  forgotPassword: (email) => axios.post('/auth/forgot', { email }),
+  resetPassword: (payload) => axios.post('/auth/reset', payload) // { email, code, password }
 };
 
 export const tripAPI = {

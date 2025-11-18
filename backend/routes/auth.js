@@ -1,20 +1,15 @@
 const express = require('express');
-const { register, login } = require('../controllers/authController');
-
 const router = express.Router();
 
-// POST /api/auth/register
-router.post('/register', register);
+const authController = require('../controllers/authController'); // tu controlador de auth existente
+const passwordController = require('../controllers/passwordController');
 
-// POST /api/auth/login  
-router.post('/login', login);
+// Rutas existentes de auth (login/register/etc.)
+router.post('/login', authController.login);
+router.post('/register', authController.register);
 
-// GET /api/auth/check (para verificar token si lo necesitas después)
-router.get('/check', (req, res) => {
-  res.json({ 
-    message: 'Auth check OK',
-    timestamp: new Date().toISOString()
-  });
-});
+// NUEVAS rutas para recuperar contraseña
+router.post('/forgot', passwordController.forgotPassword); // body: { email }
+router.post('/reset', passwordController.resetPassword); // body: { email, code, password }
 
 module.exports = router;
