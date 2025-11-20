@@ -1,42 +1,55 @@
+// backend/controllers/adminController.js
+// Controlador admin: getStats, usuarios CRUD, createDriver
+// MODIFICADO POR MÍ: getStats robusto y consistente con la UI
+
 const db = require('../config/database');
 const bcrypt = require('bcryptjs');
 
 console.log('🔀 Cargando adminController');
 
-// Obtener estadísticas básicas (ejemplo)
 const getStats = async (req, res) => {
   try {
-    const totalUsers = await db.query("SELECT COUNT(*) FROM users");
-    const totalDrivers = await db.query("SELECT COUNT(*) FROM drivers");
-    const totalTrips = await db.query("SELECT COUNT(*) FROM trips");
-    const activeTrips = await db.query("SELECT COUNT(*) FROM trips WHERE status = 'in_progress'");
-    const totalRevenue = await db.query("SELECT COALESCE(SUM(amount), 0) AS revenue_sum FROM recharges WHERE status = 'confirmada'");
+    const [
+      totalUsersResult,
+      totalDriversResult,
+      totalTripsResult,
+      activeTripsResult,
+      totalRevenueResult
+    ] = await Promise.all([
+      db.query("SELECT COUNT(*)::int AS total_users FROM users"),
+      db.query("SELECT COUNT(*)::int AS total_drivers FROM drivers"),
+      db.query("SELECT COUNT(*)::int AS total_trips FROM trips"),
+      // Ajusta el estado 'in_progress' si tu sistema usa otro valor
+      db.query("SELECT COUNT(*)::int AS active_trips FROM trips WHERE status = 'in_progress'"),
+      // Ajusta la tabla/estado si tu sistema registra ingreso de otra forma
+      db.query("SELECT COALESCE(SUM(amount),0)::numeric(12,2) AS total_revenue FROM recharges WHERE status = 'confirmada' OR status = 'confirmed'")
+    ]);
 
-    res.json({
-      totalUsers: parseInt(totalUsers.rows[0].count, 10),
-      totalDrivers: parseInt(totalDrivers.rows[0].count, 10),
-      totalTrips: parseInt(totalTrips.rows[0].count, 10),
-      activeTrips: parseInt(activeTrips.rows[0].count, 10),
-      totalRevenue: parseFloat(totalRevenue.rows[0].revenue_sum).toFixed(2)
-    });
+    const stats = {
+      totalUsers: totalUsersResult.rows[0]?.total_users ?? 0,
+      totalDrivers: totalDriversResult.rows[0]?.total_drivers ?? 0,
+      totalTrips: totalTripsResult.rows[0]?.total_trips ?? 0,
+      activeTrips: activeTripsResult.rows[0]?.active_trips ?? 0,
+      totalRevenue: (totalRevenueResult.rows[0]?.total_revenue ?? '0.00').toString()
+    };
+
+    return res.json(stats);
   } catch (error) {
-    console.error('❌ Error obteniendo estadísticas:', error);
-    res.status(500).json({ error: 'Error del servidor al obtener estadísticas' });
+    console.error('❌ Error obteniendo estadísticas (adminController.getStats):', error);
+    return res.status(500).json({ error: 'Error interno al obtener estadísticas' });
   }
 };
 
-// Listar todos los usuarios
 const getAllUsers = async (req, res) => {
   try {
     const users = await db.query('SELECT id, email, name, role, phone, balance FROM users ORDER BY id DESC');
-    res.json(users.rows);
+    return res.json(users.rows);
   } catch (error) {
-    console.error('❌ Error obteniendo usuarios:', error);
-    res.status(500).json({ error: 'Error del servidor' });
+    console.error('❌ Error obteniendo usuarios (adminController.getAllUsers):', error);
+    return res.status(500).json({ error: 'Error del servidor' });
   }
 };
 
-// Actualizar usuario (sin permitir crear passengers desde admin)
 const updateUser = async (req, res) => {
   const { id } = req.params;
   const { name, phone, role } = req.body;
@@ -56,26 +69,24 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    res.json(result.rows[0]);
+    return res.json(result.rows[0]);
   } catch (error) {
-    console.error('❌ Error actualizando usuario (admin):', error);
-    res.status(500).json({ error: 'Error actualizando usuario' });
+    console.error('❌ Error actualizando usuario (adminController.updateUser):', error);
+    return res.status(500).json({ error: 'Error actualizando usuario' });
   }
 };
 
-// Eliminar usuario
 const deleteUser = async (req, res) => {
   const { id } = req.params;
   try {
     await db.query('DELETE FROM users WHERE id = $1', [id]);
-    res.json({ message: 'Usuario eliminado' });
+    return res.json({ message: 'Usuario eliminado' });
   } catch (error) {
-    console.error('❌ Error eliminando usuario:', error);
-    res.status(500).json({ error: 'Error del servidor' });
+    console.error('❌ Error eliminando usuario (adminController.deleteUser):', error);
+    return res.status(500).json({ error: 'Error del servidor' });
   }
 };
 
-// Crear conductor (solo admin) - endpoint protegido
 const createDriver = async (req, res) => {
   const { email, password, name, phone, vehicle_type = null, vehicle_plate = null } = req.body;
 
@@ -84,13 +95,11 @@ const createDriver = async (req, res) => {
   }
 
   try {
-    // Verificar que no exista el email
     const existing = await db.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
       return res.status(400).json({ error: 'El email ya está en uso' });
     }
 
-    // Crear user con role 'driver'
     const salt = await bcrypt.genSalt(10);
     const hashed = await bcrypt.hash(password, salt);
 
@@ -101,21 +110,20 @@ const createDriver = async (req, res) => {
 
     const userId = newUser.rows[0].id;
 
-    // Generar driver_code secuencial simple (int) - si no hay ninguno empezamos en 100
+    // driver_code secuencial simple (verifica tipo de columna en DB)
     const codeRes = await db.query("SELECT COALESCE(MAX(NULLIF(driver_code, '')::int), 100) + 1 AS next_code FROM drivers");
     const driver_code = codeRes.rows[0].next_code;
 
-    // Insertar en tabla drivers
     await db.query(
       `INSERT INTO drivers (user_id, driver_code, vehicle_type, vehicle_plate, is_available)
        VALUES ($1, $2, $3, $4, $5)`,
       [userId, driver_code, vehicle_type, vehicle_plate, true]
     );
 
-    res.status(201).json({ message: 'Conductor creado', user: newUser.rows[0], driver_code });
+    return res.status(201).json({ message: 'Conductor creado', user: newUser.rows[0], driver_code });
   } catch (error) {
-    console.error('❌ Error creando conductor (admin):', error);
-    res.status(500).json({ error: 'Error creando conductor' });
+    console.error('❌ Error creando conductor (adminController.createDriver):', error);
+    return res.status(500).json({ error: 'Error creando conductor' });
   }
 };
 

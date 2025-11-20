@@ -1,13 +1,15 @@
 // backend/routes/userRoutes.js
 const express = require('express');
-const { getProfile, updateProfile } = require('../controllers/userController');
+const { getProfile, updateProfile, uploadAvatarMiddleware } = require('../controllers/userController');
 const { authenticateToken } = require('../middleware/auth');
-const multer = require('multer');
-const upload = multer(); // memoria
 
 const router = express.Router();
 
+// GET /api/users/profile (protegido)
 router.get('/profile', authenticateToken, getProfile);
-router.put('/profile', authenticateToken, upload.single('avatar'), updateProfile);
+
+// PUT /api/users/profile (protegido) — usa el middleware de upload exportado desde userController
+// Content-Type: multipart/form-data (campo 'avatar' opcional)
+router.put('/profile', authenticateToken, uploadAvatarMiddleware, updateProfile);
 
 module.exports = router;

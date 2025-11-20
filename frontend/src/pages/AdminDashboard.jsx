@@ -1,9 +1,14 @@
+// src/pages/AdminDashboard.jsx
+// Panel de administración completo (versión revisada)
+// MODIFICADO: uso consistente de la instancia `api` desde ../services/api,
+// mejor manejo de errores y uso de mensajes claros en la UI.
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Paper, Typography, Box, Grid, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Chip,
   Button, CircularProgress, Alert, Dialog, DialogTitle, DialogContent,
-  IconButton, Tooltip, Card, CardContent, TextField
+  IconButton, Tooltip, Card, CardContent, TextField, Tabs, Tab
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -18,10 +23,10 @@ import { rechargeAPI, routeAPI, adminAPI } from '../services/api';
 import UserForm from '../components/UserForm';
 import RouteForm from '../components/RouteForm';
 import { useNavigate } from 'react-router-dom';
-import axios from '../services/api'; // axios default export
+import api from '../services/api'; // instancia centralizada axios
 
 const AdminDashboard = () => {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   // Estadísticas
@@ -55,6 +60,10 @@ const AdminDashboard = () => {
   const [userFormError, setUserFormError] = useState('');
   const [editingUser, setEditingUser] = useState(null);
 
+  // UI: pestañas del admin (null = nada mostrado hasta click)
+  // 0 = Conductores, 1 = Pasajeros, 2 = Administradores, 3 = Rutas Activas
+  const [selectedTab, setSelectedTab] = useState(null);
+
   // Rechazo recarga: dialog
   const [openRejectDialog, setOpenRejectDialog] = useState(false);
   const [rejectingId, setRejectingId] = useState(null);
@@ -77,10 +86,18 @@ const AdminDashboard = () => {
     setLoadingStats(true);
     try {
       const response = await adminAPI.getStats();
+      // response.data expected to be the stats object
       setStats(response.data);
+      setMessage({ text: '', type: 'info' });
     } catch (error) {
       console.error('Error fetching stats:', error);
-      setMessage({ text: 'Error al cargar las estadísticas.', type: 'error' });
+      if (error?.response?.status === 404) {
+        setMessage({ text: 'El endpoint /api/admin/stats no está disponible en el servidor.', type: 'error' });
+      } else if (error?.response?.status === 401 || error?.response?.status === 403) {
+        setMessage({ text: 'No autorizado para ver estadísticas. Revisa token/roles.', type: 'error' });
+      } else {
+        setMessage({ text: 'Error al cargar las estadísticas.', type: 'error' });
+      }
     } finally {
       setLoadingStats(false);
     }
@@ -93,8 +110,8 @@ const AdminDashboard = () => {
       const response = await rechargeAPI.getPending();
       setPendingRecharges(response.data);
     } catch (error) {
+      console.error('Error fetching pending recharges:', error);
       setMessage({ text: 'Error al cargar recargas pendientes', type: 'error' });
-      console.error(error);
     } finally {
       setLoadingRecharges(false);
     }
@@ -107,8 +124,8 @@ const AdminDashboard = () => {
       const response = await routeAPI.getAll();
       setRoutes(response.data);
     } catch (error) {
+      console.error('Error fetching routes:', error);
       setMessage({ text: 'Error al cargar las rutas', type: 'error' });
-      console.error(error);
     } finally {
       setLoadingRoutes(false);
     }
@@ -121,8 +138,8 @@ const AdminDashboard = () => {
       const response = await adminAPI.getAllUsers();
       setUsers(response.data);
     } catch (error) {
+      console.error('Error fetching users:', error);
       setMessage({ text: 'Error al cargar la lista de usuarios. Asegúrate de tener permisos.', type: 'error' });
-      console.error(error);
     } finally {
       setLoadingUsers(false);
     }
@@ -149,6 +166,7 @@ const AdminDashboard = () => {
       setPendingRecharges(prev => prev.filter(r => r.id !== rechargeId));
       fetchStats();
     } catch (error) {
+      console.error('Error confirming recharge:', error);
       setMessage({ text: error.response?.data?.error || 'Error al aprobar la recarga. Verifique la conexión.', type: 'error' });
     } finally {
       setLoadingRechargeAction(null);
@@ -175,7 +193,6 @@ const AdminDashboard = () => {
     setRejectLoading(true);
     try {
       await rechargeAPI.reject(rejectingId, rejectReason);
-      // eliminar de lista local
       setPendingRecharges(prev => prev.filter(r => r.id !== rejectingId));
       setMessage({ text: 'Recarga rechazada y usuario notificado.', type: 'success' });
       await fetchStats();
@@ -189,9 +206,9 @@ const AdminDashboard = () => {
     }
   };
 
-  // Handlers usuarios (sin cambios)
+  // Handlers usuarios
   const handleOpenUserModal = (user = null) => {
-    setEditingUser(user); // pasar null o el usuario, sin crear objetos nuevos
+    setEditingUser(user);
     setUserFormError('');
     setOpenUserForm(true);
   };
@@ -200,7 +217,7 @@ const AdminDashboard = () => {
     setEditingUser(null);
   };
 
-  // Crear/Actualizar usuario: mostrar mensaje y cerrar modal tras éxito (igual que tu original)
+  // Crear/Actualizar usuario
   const handleUserSubmit = async (formData) => {
     setIsSubmittingUser(true);
     setUserFormError('');
@@ -221,12 +238,18 @@ const AdminDashboard = () => {
           } else {
             response = await adminAPI.createDriver(payload);
           }
-        } catch (err) { throw err; }
+        } catch (err) {
+          throw err;
+        }
+
         const created = response?.data;
         const createdId = created?.id || created?.user?.id || created?.userId || created?.data?.id || null;
         const createdRole = created?.role || created?.user?.role || created?.data?.role || null;
+
+        // Usar la instancia `api` para comprobar header Authorization si es necesario
+        const authHeader = api.defaults?.headers?.common?.['Authorization'];
+
         if (roleToCreate === 'admin' && createdRole && createdRole !== 'admin') {
-          const authHeader = axios.defaults.headers.common['Authorization'];
           if (!authHeader) {
             setMessage({ text: 'Usuario creado, pero no hay token para asignar role admin automáticamente. Revisa sesión.', type: 'warning' });
           } else if (createdId) {
@@ -243,6 +266,7 @@ const AdminDashboard = () => {
         } else {
           setMessage({ text: roleToCreate === 'admin' ? 'Administrador creado exitosamente' : 'Conductor creado exitosamente', type: 'success' });
         }
+
         await fetchAllUsers();
         await fetchStats();
         handleCloseUserModal();
@@ -268,12 +292,13 @@ const AdminDashboard = () => {
         fetchAllUsers();
         fetchStats();
       } catch (error) {
+        console.error('Error deleting user:', error);
         setMessage({ text: error.response?.data?.error || 'Error al eliminar usuario', type: 'error' });
       }
     }
   };
 
-  // Handlers rutas (sin cambios)
+  // Handlers rutas
   const handleOpenRouteModal = (route = null) => {
     setEditingRoute(route);
     setRouteFormError('');
@@ -306,6 +331,36 @@ const AdminDashboard = () => {
     }
   };
 
+  // Helpers para filtrar por pestaña
+  const drivers = users.filter(u => (u.role || '').toString().toLowerCase() === 'driver');
+  const passengers = users.filter(u => {
+    const r = (u.role || '').toString().toLowerCase();
+    return r === 'passenger' || r === 'passengers' || r === 'user' || r === 'passenger_user';
+  });
+  const admins = users.filter(u => (u.role || '').toString().toLowerCase() === 'admin');
+  const activeRoutes = routes.filter(r => r.is_active);
+
+  // IMPORTANT: compute counts from current users/routes to avoid relying on potentially stale stats from backend
+  const totalUsersCount = users.length;
+  const driversCount = drivers.length;
+  const passengersCount = passengers.length;
+  const adminsCount = admins.length;
+  const activeRoutesCount = activeRoutes.length;
+
+  const handleTabChange = (event, newValue) => {
+    setSelectedTab(newValue);
+  };
+
+  // Navegar a sección de usuarios y abrir la pestaña adecuada
+  const gotoTabAndScroll = (tabIndex) => {
+    setSelectedTab(tabIndex);
+    // hacer scroll suave al área de gestión de usuarios
+    setTimeout(() => {
+      const el = document.getElementById('user-management');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  };
+
   // RENDER
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default' }}>
@@ -315,9 +370,23 @@ const AdminDashboard = () => {
           <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 700, color: 'text.primary' }}>
             👨‍💼 Panel de Administración
           </Typography>
+
+          {/* Botones principales (creación) separados y visibles */}
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button variant="contained" color="primary" startIcon={<AddIcon />} onClick={() => handleOpenRouteModal(null)}>
+              Crear Ruta
+            </Button>
+            <Button variant="contained" color="primary" startIcon={<AddIcon />} onClick={() => handleOpenUserModal(null)}>
+              Crear Usuario
+            </Button>
+          </Box>
         </Box>
 
-        {message.text && <Alert severity={message.type} sx={{ mb: 2 }} onClose={() => setMessage({ text: '', type: 'info' })}>{message.text}</Alert>}
+        {message.text && (
+          <Alert severity={message.type} sx={{ mb: 2 }} onClose={() => setMessage({ text: '', type: 'info' })}>
+            {message.text}
+          </Alert>
+        )}
 
         <Grid container spacing={3}>
           <Grid item xs={12} md={7}>
@@ -376,19 +445,11 @@ const AdminDashboard = () => {
             </Paper>
           </Grid>
 
-          {/* Gestión de rutas: copia directa de tu layout (sin cambios) */}
           <Grid item xs={12} md={5}>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5" color="primary">🛣️ Gestión de Rutas</Typography>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  startIcon={<AddIcon />}
-                  onClick={() => handleOpenRouteModal(null)}
-                >
-                  Crear Ruta
-                </Button>
+                {/* removed duplicate Crear Ruta button here (creation available on top) */}
               </Box>
               {loadingRoutes ? (
                 <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
@@ -409,7 +470,7 @@ const AdminDashboard = () => {
                       {routes.map((r) => (
                         <TableRow key={r.id}>
                           <TableCell>{r.name}</TableCell>
-                          <TableCell>{parseFloat(r.fare).toFixed(2)}</TableCell>
+                          <TableCell>{parseFloat(r.fare || 0).toFixed(2)}</TableCell>
                           <TableCell>
                             <Chip
                               label={r.is_active ? 'Activa' : 'Inactiva'}
@@ -427,13 +488,12 @@ const AdminDashboard = () => {
                               <IconButton
                                 size="small"
                                 onClick={() => {
-                                  // toggle via update (tu handler anterior)
-                                  routeAPI.update(r.id, { ...r, is_active: !r.is_active }).then(() => {
-                                    setMessage({ text: `Ruta ${r.is_active ? 'desactivada' : 'activada'}.`, type: 'success' });
-                                    fetchRoutes(); fetchStats();
-                                  }).catch(err => {
-                                    setMessage({ text: err?.response?.data?.error || 'Error al actualizar ruta', type: 'error' });
-                                  });
+                                  routeAPI.update(r.id, { ...r, is_active: !r.is_active })
+                                    .then(() => { setMessage({ text: `Ruta ${r.is_active ? 'desactivada' : 'activada'}.`, type: 'success' }); fetchRoutes(); fetchStats(); })
+                                    .catch(err => {
+                                      console.error('Error updating route:', err);
+                                      setMessage({ text: err?.response?.data?.error || 'Error al actualizar ruta', type: 'error' });
+                                    });
                                 }}
                               >
                                 {r.is_active ? <CloseIcon fontSize="small" color="error" /> : <AddIcon fontSize="small" color="success" />}
@@ -467,80 +527,325 @@ const AdminDashboard = () => {
 
               <Grid item xs={12}>
                 <Grid container spacing={3}>
-                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Usuarios</Typography><Typography variant="h4">{stats.totalUsers}</Typography></CardContent></Card></Grid>
-                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Conductores</Typography><Typography variant="h4">{stats.totalDrivers}</Typography></CardContent></Card></Grid>
-                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Total Viajes</Typography><Typography variant="h4">{stats.totalTrips}</Typography></CardContent></Card></Grid>
-                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Viajes Activos</Typography><Typography variant="h4">{stats.activeTrips}</Typography></CardContent></Card></Grid>
-                  <Grid item xs={12} sm={4} md={2.4}><Card><CardContent><Typography color="textSecondary">Rutas Activas</Typography><Typography variant="h4">{routes.filter(r => r.is_active).length}</Typography></CardContent></Card></Grid>
+                  <Grid item xs={12} sm={6} md={2.4}>
+                    <Card sx={{ cursor: 'pointer' }} onClick={() => gotoTabAndScroll(1)}>
+                      <CardContent>
+                        <Typography color="textSecondary">Total Usuarios</Typography>
+                        <Typography variant="h4">{totalUsersCount}</Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  <Grid item xs={12} sm={6} md={2.4}>
+                    <Card
+                      sx={{
+                        cursor: 'pointer',
+                        '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
+                        transition: 'transform 0.15s ease'
+                      }}
+                      onClick={() => gotoTabAndScroll(0)}
+                    >
+                      <CardContent>
+                        <Typography color="textSecondary">Conductores</Typography>
+                        <Typography variant="h4">{driversCount}</Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  <Grid item xs={12} sm={6} md={2.4}>
+                    <Card
+                      sx={{
+                        cursor: 'pointer',
+                        '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
+                        transition: 'transform 0.15s ease'
+                      }}
+                      onClick={() => gotoTabAndScroll(1)}
+                    >
+                      <CardContent>
+                        <Typography color="textSecondary">Pasajeros</Typography>
+                        <Typography variant="h4">{passengersCount}</Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  {/* Administradores - nueva tarjeta, igual que Pasajeros/Conductores */}
+                  <Grid item xs={12} sm={6} md={2.4}>
+                    <Card
+                      sx={{
+                        cursor: 'pointer',
+                        '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
+                        transition: 'transform 0.15s ease'
+                      }}
+                      onClick={() => gotoTabAndScroll(2)}
+                    >
+                      <CardContent>
+                        <Typography color="textSecondary">Administradores</Typography>
+                        <Typography variant="h4">{adminsCount}</Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+
+                  <Grid item xs={12} sm={6} md={2.4}>
+                    <Card>
+                      <CardContent>
+                        <Typography color="textSecondary">Rutas Activas</Typography>
+                        <Typography variant="h4">{activeRoutesCount}</Typography>
+                      </CardContent>
+                    </Card>
+                  </Grid>
                 </Grid>
               </Grid>
             </>
           )}
 
           <Grid item xs={12}>
-            <Paper sx={{ p: 3 }}>
+            <Paper id="user-management" sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5" gutterBottom color="primary">👥 Gestión de Usuarios</Typography>
-                <Button variant="contained" color="primary" onClick={() => handleOpenUserModal(null)} startIcon={<AddIcon />}>
-                  Crear Usuario
-                </Button>
+                {/* top "Crear Usuario" is the single source of creation, removed duplicates */}
               </Box>
-              {loadingUsers ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
-              ) : users.length === 0 ? (
-                <Typography color="text.secondary">No hay usuarios registrados.</Typography>
-              ) : (
-                <TableContainer>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>ID</TableCell>
-                        <TableCell>Nombre</TableCell>
-                        <TableCell>Email</TableCell>
-                        <TableCell>Rol</TableCell>
-                        <TableCell>Balance (Bs)</TableCell>
-                        <TableCell align="right">Acciones</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {users.map((u) => (
-                        <TableRow key={u.id}>
-                          <TableCell>{u.id}</TableCell>
-                          <TableCell>{u.name}</TableCell>
-                          <TableCell>{u.email}</TableCell>
-                          <TableCell>
-                            <Chip
-                              label={u.role.toUpperCase()}
-                              color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
-                              size="small"
-                            />
-                          </TableCell>
-                          <TableCell>{parseFloat(u.balance).toFixed(2)}</TableCell>
-                          <TableCell align="right">
-                            <Tooltip title="Editar Usuario">
-                              <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            {u.id !== user.id && (
-                              <Tooltip title="Eliminar Usuario">
-                                <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
-                                  <DeleteIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+
+              {/* SOLO mostrar Tabs y contenido cuando haya una pestaña seleccionada */}
+              {selectedTab !== null && (
+                <>
+                  <Tabs value={selectedTab} onChange={handleTabChange} sx={{ mb: 2 }}>
+                    <Tab label="Conductores" value={0} />
+                    <Tab label="Pasajeros" value={1} />
+                    <Tab label="Administradores" value={2} />
+                    <Tab label="Rutas Activas" value={3} />
+                  </Tabs>
+
+                  {/* Contenido según pestaña */}
+                  {selectedTab === 0 && (
+                    <>
+                      {loadingUsers ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                      ) : drivers.length === 0 ? (
+                        <Typography color="text.secondary">No hay conductores registrados.</Typography>
+                      ) : (
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>ID</TableCell>
+                                <TableCell>Nombre</TableCell>
+                                <TableCell>Email</TableCell>
+                                <TableCell>Rol</TableCell>
+                                <TableCell>Balance (Bs)</TableCell>
+                                <TableCell align="right">Acciones</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {drivers.map((u) => (
+                                <TableRow key={u.id}>
+                                  <TableCell>{u.id}</TableCell>
+                                  <TableCell>{u.name}</TableCell>
+                                  <TableCell>{u.email}</TableCell>
+                                  <TableCell>
+                                    <Chip
+                                      label={(u.role || '').toString().toUpperCase()}
+                                      color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
+                                      size="small"
+                                    />
+                                  </TableCell>
+                                  <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
+                                  <TableCell align="right">
+                                    <Tooltip title="Editar Usuario">
+                                      <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    {u.id !== user.id && (
+                                      <Tooltip title="Eliminar Usuario">
+                                        <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
+                                          <DeleteIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </>
+                  )}
+
+                  {selectedTab === 1 && (
+                    <>
+                      {loadingUsers ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                      ) : passengers.length === 0 ? (
+                        <Typography color="text.secondary">No hay pasajeros registrados.</Typography>
+                      ) : (
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>ID</TableCell>
+                                <TableCell>Nombre</TableCell>
+                                <TableCell>Email</TableCell>
+                                <TableCell>Rol</TableCell>
+                                <TableCell>Balance (Bs)</TableCell>
+                                <TableCell align="right">Acciones</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {passengers.map((u) => (
+                                <TableRow key={u.id}>
+                                  <TableCell>{u.id}</TableCell>
+                                  <TableCell>{u.name}</TableCell>
+                                  <TableCell>{u.email}</TableCell>
+                                  <TableCell>
+                                    <Chip
+                                      label={(u.role || '').toString().toUpperCase()}
+                                      color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
+                                      size="small"
+                                    />
+                                  </TableCell>
+                                  <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
+                                  <TableCell align="right">
+                                    <Tooltip title="Editar Usuario">
+                                      <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    {u.id !== user.id && (
+                                      <Tooltip title="Eliminar Usuario">
+                                        <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
+                                          <DeleteIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </>
+                  )}
+
+                  {selectedTab === 2 && (
+                    <>
+                      {loadingUsers ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                      ) : admins.length === 0 ? (
+                        <Typography color="text.secondary">No hay administradores registrados.</Typography>
+                      ) : (
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>ID</TableCell>
+                                <TableCell>Nombre</TableCell>
+                                <TableCell>Email</TableCell>
+                                <TableCell>Rol</TableCell>
+                                <TableCell>Balance (Bs)</TableCell>
+                                <TableCell align="right">Acciones</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {admins.map((u) => (
+                                <TableRow key={u.id}>
+                                  <TableCell>{u.id}</TableCell>
+                                  <TableCell>{u.name}</TableCell>
+                                  <TableCell>{u.email}</TableCell>
+                                  <TableCell>
+                                    <Chip
+                                      label={(u.role || '').toString().toUpperCase()}
+                                      color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
+                                      size="small"
+                                    />
+                                  </TableCell>
+                                  <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
+                                  <TableCell align="right">
+                                    <Tooltip title="Editar Usuario">
+                                      <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    {u.id !== user.id && (
+                                      <Tooltip title="Eliminar Usuario">
+                                        <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
+                                          <DeleteIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </>
+                  )}
+
+                  {selectedTab === 3 && (
+                    <>
+                      {loadingRoutes ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                      ) : activeRoutes.length === 0 ? (
+                        <Typography color="text.secondary">No hay rutas activas.</Typography>
+                      ) : (
+                        <TableContainer>
+                          <Table size="small">
+                            <TableHead>
+                              <TableRow>
+                                <TableCell>Ruta</TableCell>
+                                <TableCell>Tarifa (Bs)</TableCell>
+                                <TableCell>Estado</TableCell>
+                                <TableCell align="right">Acción</TableCell>
+                              </TableRow>
+                            </TableHead>
+                            <TableBody>
+                              {activeRoutes.map((r) => (
+                                <TableRow key={r.id}>
+                                  <TableCell>{r.name}</TableCell>
+                                  <TableCell>{parseFloat(r.fare || 0).toFixed(2)}</TableCell>
+                                  <TableCell>
+                                    <Chip label="Activa" color="success" size="small" />
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <Tooltip title="Editar Ruta">
+                                      <IconButton size="small" onClick={() => handleOpenRouteModal(r)}>
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Desactivar Ruta">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => {
+                                          routeAPI.update(r.id, { ...r, is_active: false })
+                                            .then(() => { setMessage({ text: 'Ruta desactivada.', type: 'success' }); fetchRoutes(); fetchStats(); })
+                                            .catch(err => {
+                                              console.error('Error deactivation route:', err);
+                                              setMessage({ text: err?.response?.data?.error || 'Error al actualizar ruta', type: 'error' });
+                                            });
+                                        }}
+                                      >
+                                        <CloseIcon fontSize="small" color="error" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </TableContainer>
+                      )}
+                    </>
+                  )}
+                </>
               )}
             </Paper>
           </Grid>
         </Grid>
 
-        {/* Dialog para crear/editar rutas */}
+        {/* Dialogs ... (RouteForm, UserForm, Reject) */}
         <Dialog open={openRouteForm} onClose={handleCloseRouteModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingRoute ? 'Editar Ruta' : 'Crear Nueva Ruta'}</DialogTitle>
           <DialogContent>
@@ -554,7 +859,6 @@ const AdminDashboard = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Dialog para crear/editar usuarios */}
         <Dialog open={openUserForm} onClose={handleCloseUserModal} maxWidth="sm" fullWidth>
           <DialogTitle>{editingUser ? 'Editar Usuario' : 'Crear Nuevo Usuario'}</DialogTitle>
           <DialogContent>
@@ -569,7 +873,6 @@ const AdminDashboard = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Dialog para rechazar recarga */}
         <Dialog open={openRejectDialog} onClose={handleCloseReject} maxWidth="sm" fullWidth>
           <DialogTitle>Rechazar Recarga</DialogTitle>
           <DialogContent>
