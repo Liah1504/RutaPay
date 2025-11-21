@@ -1,59 +1,60 @@
+// backend/controllers/driversController.js
+// CONTROLADOR DE CONDUCTORES (versión para driver_code)
+// Busca historial por driver_code o resuelve driver_code desde el usuario autenticado.
+
 const db = require('../config/database');
 
 /**
- * Helper: resolver driverId
- * - Si se pasa driver_code en query o como parámetro, intenta buscar por driver_code.
- * - Si no, usa el usuario autenticado (req.user.id) para buscar drivers.user_id.
- * - Devuelve driverId (number) o lanza un error con status/message para respuestas HTTP.
+ * Resuelve driver_code (string) desde query/params o desde req.user (drivers.user_id).
+ * Lanza Error con .status cuando aplica.
  */
-const resolveDriverId = async (req) => {
-  const driverCode = req.query?.driver_code || req.params?.driver_code;
-  if (driverCode) {
-    const drvRes = await db.query('SELECT id, user_id FROM drivers WHERE driver_code = $1 LIMIT 1', [driverCode]);
-    if (drvRes.rows.length === 0) {
-      const err = new Error('No se encontró conductor con driver_code proporcionado');
-      err.status = 404;
-      throw err;
+const resolveDriverCode = async (req) => {
+  const driverCodeQuery = req.query?.driver_code || req.params?.driver_code;
+  if (driverCodeQuery) {
+    const d = await db.query('SELECT driver_code FROM drivers WHERE driver_code = $1 LIMIT 1', [driverCodeQuery]);
+    if (d.rows.length === 0) {
+      const e = new Error('Conductor no encontrado por driver_code');
+      e.status = 404;
+      throw e;
     }
-    return drvRes.rows[0].id;
+    return d.rows[0].driver_code;
   }
 
-  const userId = req.user && req.user.id;
+  const userId = req.user?.id;
   if (!userId) {
-    const err = new Error('Usuario no autenticado');
-    err.status = 401;
-    throw err;
+    const e = new Error('Usuario no autenticado');
+    e.status = 401;
+    throw e;
   }
-
-  const drvByUser = await db.query('SELECT id FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
-  if (drvByUser.rows.length === 0) {
-    const err = new Error('No se encontró perfil de conductor para este usuario');
-    err.status = 404;
-    throw err;
+  const d = await db.query('SELECT driver_code FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+  if (d.rows.length === 0) {
+    const e = new Error('No se encontró conductor para este usuario');
+    e.status = 404;
+    throw e;
   }
-  return drvByUser.rows[0].id;
+  return d.rows[0].driver_code;
 };
 
 /**
  * GET /api/drivers/profile
+ * Devuelve información del conductor (fila drivers + datos del usuario).
  */
 const getDriverProfile = async (req, res) => {
   try {
-    const userId = req.user && req.user.id;
+    const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Usuario no autenticado' });
 
     const q = `
       SELECT u.id as user_id, u.name, u.email, u.phone, u.balance,
-             d.id as driver_id, d.driver_code, d.license_number, d.vehicle_type, d.vehicle_plate,
+             d.id as driver_row_id, d.driver_code, d.license_number, d.vehicle_type, d.vehicle_plate,
              d.is_available, d.current_location, d.rating, d.total_trips, d.created_at as driver_created_at, d.updated_at as driver_updated_at
       FROM drivers d
       JOIN users u ON d.user_id = u.id
       WHERE d.user_id = $1
+      LIMIT 1
     `;
     const result = await db.query(q, [userId]);
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Conductor no encontrado' });
-    }
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Conductor no encontrado' });
     return res.json(result.rows[0]);
   } catch (err) {
     console.error('getDriverProfile error:', err && (err.stack || err.message || err));
@@ -63,77 +64,77 @@ const getDriverProfile = async (req, res) => {
 
 /**
  * GET /api/drivers/payments
- *
- * Ahora resuelve el driverId correctamente (por driver_code o por user_id -> drivers.id)
- * y usa ese driverId para recuperar los pagos.
+ * Busca payments por driver_code (string). También permite paginación limit/offset.
  */
 const getDriverPayments = async (req, res) => {
   try {
-    const driverId = await resolveDriverId(req);
+    const driverCode = await resolveDriverCode(req);
+
+    const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit || '500', 10)));
+    const offset = Math.max(0, parseInt(req.query.offset || '0', 10));
 
     const q = `
       SELECT p.id, p.amount, p.created_at,
-             COALESCE(r.name, 'Sin ruta') AS route_name,
-             COALESCE(u.name, 'Pasajero desconocido') AS passenger_name,
-             p.passenger_id
+             p.driver_code,
+             r.id AS route_id, COALESCE(r.name,'Sin ruta') AS route_name,
+             u_pass.id AS passenger_id, COALESCE(u_pass.name,'Pasajero desconocido') AS passenger_name
       FROM payments p
       LEFT JOIN routes r ON p.route_id = r.id
-      LEFT JOIN users u ON p.passenger_id = u.id
-      WHERE p.driver_id = $1
+      LEFT JOIN users u_pass ON p.passenger_id = u_pass.id
+      WHERE p.driver_code = $1
       ORDER BY p.created_at DESC
-      LIMIT 500
+      LIMIT $2 OFFSET $3
     `;
-    const result = await db.query(q, [driverId]);
+    const result = await db.query(q, [driverCode, limit, offset]);
     return res.json(result.rows);
   } catch (err) {
-    console.error('getDriverPayments error:', err && (err.stack || err.message || err));
-    const status = err && err.status ? err.status : 500;
-    return res.status(status).json({ error: err.message || 'Error al obtener el historial de pagos' });
+    console.error('getDriverPayments error', err && (err.stack || err.message || err));
+    const status = err?.status || 500;
+    return res.status(status).json({ error: err.message || 'Error obteniendo pagos' });
   }
 };
 
 /**
  * GET /api/drivers/payments/summary?date=YYYY-MM-DD
- * Usa rango [date, date + 1) para evitar problemas con zonas horarias.
- * Resuelve driverId de forma robusta.
+ * Resumen por día usando driver_code para filtrar.
  */
 const getDriverPaymentsSummary = async (req, res) => {
   try {
-    const driverId = await resolveDriverId(req);
+    const driverCode = await resolveDriverCode(req);
 
     const date = req.query.date || new Date().toISOString().slice(0, 10);
-    console.log('getDriverPaymentsSummary -> driverId:', driverId, 'date:', date);
+    console.log('getDriverPaymentsSummary -> driverCode:', driverCode, 'date:', date);
 
     const qTotals = `
       SELECT r.id AS route_id, r.name AS route_name, COALESCE(SUM(p.amount), 0)::numeric(10,2) AS total
       FROM routes r
       LEFT JOIN payments p
         ON p.route_id = r.id
-        AND p.driver_id = $1
+        AND p.driver_code = $1
         AND p.created_at >= $2::date
         AND p.created_at < ($2::date + INTERVAL '1 day')
       GROUP BY r.id, r.name
       HAVING COALESCE(SUM(p.amount), 0) > 0
       ORDER BY total DESC
     `;
-    const totalsRes = await db.query(qTotals, [driverId, date]);
+    const totalsRes = await db.query(qTotals, [driverCode, date]);
 
     const totalRes = await db.query(
       `SELECT COALESCE(SUM(amount),0)::numeric(10,2) AS total
        FROM payments
-       WHERE driver_id = $1
+       WHERE driver_code = $1
          AND created_at >= $2::date
          AND created_at < ($2::date + INTERVAL '1 day')`,
-      [driverId, date]
+      [driverCode, date]
     );
 
     const passengersRes = await db.query(
       `SELECT COUNT(*)::int AS passengers_count, COUNT(DISTINCT passenger_id)::int AS unique_passengers
        FROM payments
-       WHERE driver_id = $1
+       WHERE driver_code = $1
          AND created_at >= $2::date
          AND created_at < ($2::date + INTERVAL '1 day')`,
-      [driverId, date]
+      [driverCode, date]
     );
 
     return res.json({
@@ -144,22 +145,21 @@ const getDriverPaymentsSummary = async (req, res) => {
     });
   } catch (err) {
     console.error('getDriverPaymentsSummary error:', err && (err.stack || err.message || err));
-    const status = err && err.status ? err.status : 500;
+    const status = err?.status || 500;
     return res.status(status).json({ error: err.message || 'Error al obtener resumen de pagos' });
   }
 };
 
 /**
  * GET /api/drivers/notifications
- *
- * Leemos desde la tabla notifications filtrada por user_id.
+ * Lee las notificaciones desde la tabla notifications para el user_id autenticado.
  */
 const getDriverNotifications = async (req, res) => {
   try {
     const userId = req.user && req.user.id;
     if (!userId) return res.status(401).json({ error: 'Usuario no autenticado' });
 
-    const limit = parseInt(req.query.limit || '5', 10);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '5', 10)));
     const unreadOnly = String(req.query.unread || 'false').toLowerCase() === 'true';
 
     const params = [userId, limit];

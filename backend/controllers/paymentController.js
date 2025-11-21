@@ -1,15 +1,22 @@
+// backend/controllers/paymentController.js
+// Guarda en payments both driver_id (drivers.id) y driver_code (drivers.driver_code)
+// Al crear un pago: resuelve driver_code -> drivers.id; si se recibe driver_id (drivers.id) lo usa.
+// Notifica al usuario asociado (drivers.user_id).
+
 const db = require('../config/database');
 let notifier;
-try {
-  notifier = require('../utils/notifications');
-} catch (err) {
-  // notifier optional
-  notifier = null;
-}
+try { notifier = require('../utils/notifications'); } catch (err) { notifier = null; }
 
 /**
  * POST /api/payment/pay
  * Realiza el pago manual y crea una notificación persistente para el driver.
+ *
+ * Reglas:
+ * - Acepta driver_code (recomendado) o driver_id (drivers.id).
+ * - Inserta en payments:
+ *     driver_id = drivers.id (fila de drivers)
+ *     driver_code = drivers.driver_code (string)
+ * - Crea notificación para drivers.user_id (usuario asociado).
  */
 const manualPayment = async (req, res) => {
   try {
@@ -21,26 +28,36 @@ const manualPayment = async (req, res) => {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
 
-    const { driver_code, route_id } = req.body;
-    if (!route_id || !driver_code) {
-      return res.status(400).json({ error: 'Parámetros faltantes: route_id y driver_code son requeridos' });
+    const { driver_code, driver_id /* optional drivers.id */, route_id } = req.body;
+    if (!route_id) {
+      return res.status(400).json({ error: 'Parámetros faltantes: route_id es requerido' });
     }
 
-    // 1) Buscar conductor por driver_code y obtener driver.user_id
-    const qDriver = `
-      SELECT d.id AS driver_id, d.user_id AS driver_user_id, d.driver_code, u.name AS driver_name
-      FROM drivers d
-      LEFT JOIN users u ON d.user_id = u.id
-      WHERE d.driver_code = $1
-      LIMIT 1
-    `;
-    const dr = await db.query(qDriver, [driver_code]);
-    if (dr.rows.length === 0) {
-      console.warn('manualPayment: conductor no encontrado para driver_code=', driver_code);
-      return res.status(404).json({ error: 'Conductor no encontrado con ese código' });
+    // Resolver drivers.id (driver_row_id) y driver_code y driverUserId (users.id)
+    let driverRowId = null;
+    let resolvedDriverCode = null;
+    let driverUserId = null;
+
+    if (driver_id) {
+      const d = await db.query('SELECT id, user_id, driver_code FROM drivers WHERE id = $1 LIMIT 1', [driver_id]);
+      if (d.rows.length === 0) {
+        return res.status(404).json({ error: 'Conductor no encontrado por id' });
+      }
+      driverRowId = d.rows[0].id;
+      resolvedDriverCode = d.rows[0].driver_code;
+      driverUserId = d.rows[0].user_id;
+    } else if (driver_code) {
+      const d = await db.query('SELECT id, user_id, driver_code FROM drivers WHERE driver_code = $1 LIMIT 1', [driver_code]);
+      if (d.rows.length === 0) {
+        console.warn('manualPayment: conductor no encontrado para driver_code=', driver_code);
+        return res.status(404).json({ error: 'Conductor no encontrado con ese código' });
+      }
+      driverRowId = d.rows[0].id;
+      resolvedDriverCode = d.rows[0].driver_code;
+      driverUserId = d.rows[0].user_id;
+    } else {
+      return res.status(400).json({ error: 'driver_code o driver_id son requeridos' });
     }
-    const driver = dr.rows[0];
-    const driverUserId = driver.driver_user_id;
 
     // 2) Obtener ruta y tarifa
     const qRoute = `SELECT id, name, fare FROM routes WHERE id = $1 LIMIT 1`;
@@ -59,17 +76,18 @@ const manualPayment = async (req, res) => {
       // Iniciar transacción para crear payment
       await db.query('BEGIN');
 
+      // INSERT: guardar driver_id = drivers.id y driver_code
       const insertQ = `
-        INSERT INTO payments (passenger_id, driver_id, amount, route_id, created_at)
-        VALUES ($1, $2, $3, $4, NOW())
+        INSERT INTO payments (passenger_id, driver_id, driver_code, amount, route_id, created_at)
+        VALUES ($1, $2, $3, $4, $5, NOW())
         RETURNING *
       `;
-      const insertRes = await db.query(insertQ, [passengerUserId, driver.driver_id, fare, route_id]);
+      const insertRes = await db.query(insertQ, [passengerUserId, driverRowId, resolvedDriverCode, fare, route_id]);
       const newPayment = insertRes.rows[0];
 
       await db.query('COMMIT');
 
-      // Insertar notificación persistente para el driver si driverUserId existe
+      // Insertar notificación persistente para el driver (usuario) si driverUserId existe
       if (driverUserId) {
         try {
           const title = `Pago recibido • ${route.name}`;
@@ -81,7 +99,8 @@ const manualPayment = async (req, res) => {
             passenger_name: passengerName,
             route_id,
             route_name: route.name,
-            amount: fare
+            amount: fare,
+            driver_code: resolvedDriverCode
           };
 
           const notifQ = `
@@ -93,12 +112,12 @@ const manualPayment = async (req, res) => {
           const createdNotif = notifRes.rows[0];
           console.log('manualPayment: notificación creada ->', createdNotif);
 
-          // Emitir evento en memoria (si tienes listeners)
+          // Emitir evento en memoria (si existe notifier)
           try {
             if (notifier && typeof notifier.emit === 'function') {
               notifier.emit('payment', {
                 driver_user_id: driverUserId,
-                payment_id: newPayment.id,
+                payment: newPayment,
                 ...dataObj
               });
             }
@@ -106,11 +125,10 @@ const manualPayment = async (req, res) => {
             console.warn('manualPayment: error emitiendo evento payment:', emitErr && (emitErr.message || emitErr));
           }
         } catch (notifErr) {
-          // No hacemos rollback por fallo de notificación; logueamos y seguimos.
           console.warn('manualPayment: No se pudo insertar notificación en tabla notifications:', notifErr && (notifErr.stack || notifErr.message || notifErr));
         }
       } else {
-        console.warn('manualPayment: driverUserId ausente, no se creó notificación para driver:', driver);
+        console.warn('manualPayment: driverUserId ausente, no se creó notificación para driver_row_id:', driverRowId);
       }
 
       console.log('manualPayment: pago creado ->', newPayment);

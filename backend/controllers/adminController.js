@@ -1,6 +1,6 @@
 // backend/controllers/adminController.js
 // Controlador admin: getStats, usuarios CRUD, createDriver
-// MODIFICADO POR MÍ: getStats robusto y consistente con la UI
+// MODIFICADO: generación segura de driver_code, transacción para crear user+driver.
 
 const db = require('../config/database');
 const bcrypt = require('bcryptjs');
@@ -19,9 +19,7 @@ const getStats = async (req, res) => {
       db.query("SELECT COUNT(*)::int AS total_users FROM users"),
       db.query("SELECT COUNT(*)::int AS total_drivers FROM drivers"),
       db.query("SELECT COUNT(*)::int AS total_trips FROM trips"),
-      // Ajusta el estado 'in_progress' si tu sistema usa otro valor
       db.query("SELECT COUNT(*)::int AS active_trips FROM trips WHERE status = 'in_progress'"),
-      // Ajusta la tabla/estado si tu sistema registra ingreso de otra forma
       db.query("SELECT COALESCE(SUM(amount),0)::numeric(12,2) AS total_revenue FROM recharges WHERE status = 'confirmada' OR status = 'confirmed'")
     ]);
 
@@ -87,8 +85,14 @@ const deleteUser = async (req, res) => {
   }
 };
 
+/**
+ * createDriver:
+ * - Crea user + driver dentro de una transacción.
+ * - Genera driver_code de forma segura saltándose valores no numéricos.
+ * - Devuelve driver_code (y user) en la respuesta.
+ */
 const createDriver = async (req, res) => {
-  const { email, password, name, phone, vehicle_type = null, vehicle_plate = null } = req.body;
+  const { email, password, name, phone = null, vehicle_type = null, vehicle_plate = null } = req.body;
 
   if (!email || !password || !name) {
     return res.status(400).json({ error: 'email, password y name son requeridos' });
@@ -103,26 +107,40 @@ const createDriver = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashed = await bcrypt.hash(password, salt);
 
+    // Inicio de transacción: crear usuario y fila en drivers de forma atómica
+    await db.query('BEGIN');
+
     const newUser = await db.query(
       'INSERT INTO users (email, password, name, phone, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, name, role, phone',
       [email, hashed, name, phone, 'driver']
     );
-
     const userId = newUser.rows[0].id;
 
-    // driver_code secuencial simple (verifica tipo de columna en DB)
-    const codeRes = await db.query("SELECT COALESCE(MAX(NULLIF(driver_code, '')::int), 100) + 1 AS next_code FROM drivers");
-    const driver_code = codeRes.rows[0].next_code;
+    // Generar driver_code seguro: considerar sólo códigos que sean enteros
+    // Evita fallos si hay driver_code como 'deleted_9' => ignoramos esos
+    const codeRes = await db.query(
+      `SELECT COALESCE(MAX( (CASE WHEN driver_code ~ '^[0-9]+$' THEN driver_code::int ELSE NULL END) ), 100) + 1 AS next_code
+       FROM drivers`
+    );
+    const driver_code = String(codeRes.rows[0].next_code); // guardamos como string por consistencia
 
+    // Insertar driver (user_id es integer)
     await db.query(
-      `INSERT INTO drivers (user_id, driver_code, vehicle_type, vehicle_plate, is_available)
-       VALUES ($1, $2, $3, $4, $5)`,
+      `INSERT INTO drivers (user_id, driver_code, vehicle_type, vehicle_plate, is_available, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())`,
       [userId, driver_code, vehicle_type, vehicle_plate, true]
     );
 
+    await db.query('COMMIT');
+
     return res.status(201).json({ message: 'Conductor creado', user: newUser.rows[0], driver_code });
   } catch (error) {
+    try { await db.query('ROLLBACK'); } catch (e) { /* ignore rollback error */ }
     console.error('❌ Error creando conductor (adminController.createDriver):', error);
+    // Exponer un mensaje amigable manteniendo detalles en logs
+    if (error && error.code === '22P02') {
+      return res.status(400).json({ error: 'Error en datos numéricos al generar driver_code. Revisa registros existentes.' });
+    }
     return res.status(500).json({ error: 'Error creando conductor' });
   }
 };
