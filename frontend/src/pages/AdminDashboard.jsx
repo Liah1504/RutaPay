@@ -1,8 +1,3 @@
-// src/pages/AdminDashboard.jsx
-// Panel de administración completo (versión revisada)
-// MODIFICADO: uso consistente de la instancia `api` desde ../services/api,
-// mejor manejo de errores y uso de mensajes claros en la UI.
-
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Paper, Typography, Box, Grid, Table,
@@ -24,6 +19,9 @@ import UserForm from '../components/UserForm';
 import RouteForm from '../components/RouteForm';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api'; // instancia centralizada axios
+
+// Nuevo: componente de reporte (asegúrate de tener src/components/DriverDailyBalances.jsx)
+import DriverDailyBalances from '../components/DriverDailyBalances';
 
 const AdminDashboard = () => {
   const { user } = useAuth();
@@ -597,6 +595,15 @@ const AdminDashboard = () => {
               </Grid>
             </>
           )}
+
+          {/* ========================= */}
+          {/* Balance diario por conductor */}
+          <Grid item xs={12} sx={{ mt: 3 }}>
+            <Paper sx={{ p: 2 }}>
+              <DriverDailyBalances />
+            </Paper>
+          </Grid>
+          {/* ========================= */}
 
           <Grid item xs={12}>
             <Paper id="user-management" sx={{ p: 3 }}>
