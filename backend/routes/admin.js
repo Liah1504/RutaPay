@@ -28,6 +28,23 @@ router.delete('/users/:id', adminProtect, adminController.deleteUser);
 // Crear conductor (solo admin)
 router.post('/drivers', adminProtect, adminController.createDriver);
 
+// --- NUEVO: ingresos por periodo / rango ---
+/**
+ * GET /api/admin/revenue
+ * Query params:
+ *  - period=day|week|month   (opcional, default 'day')
+ *  - start=YYYY-MM-DD&end=YYYY-MM-DD  (opcional, rango explícito)
+ *
+ * Responde: { total: number, items: [{ date, amount }, ...] }
+ */
+if (typeof adminController.getRevenue === 'function') {
+  router.get('/revenue', adminProtect, adminController.getRevenue);
+} else {
+  router.get('/revenue', adminProtect, (req, res) => {
+    res.status(501).json({ error: 'Endpoint getRevenue no implementado en el controlador adminController' });
+  });
+}
+
 // Reportes (si existe el controller, lo usamos; si no devolvemos 501)
 if (reportsController && typeof reportsController.driverDailyBalancesByCode === 'function') {
   router.get('/reports/driver-daily-balances', adminProtect, reportsController.driverDailyBalancesByCode);

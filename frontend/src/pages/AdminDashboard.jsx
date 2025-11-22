@@ -20,7 +20,7 @@ import RouteForm from '../components/RouteForm';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api'; // instancia centralizada axios
 
-// Nuevo: componente de reporte (asegúrate de tener src/components/DriverDailyBalances.jsx)
+// Componente de reporte reutilizado
 import DriverDailyBalances from '../components/DriverDailyBalances';
 
 const AdminDashboard = () => {
@@ -28,15 +28,18 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Estadísticas
+  // Estadísticas globales (counts)
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalDrivers: 0,
     totalTrips: 0,
-    activeTrips: 0,
-    totalRevenue: '0.00'
+    activeTrips: 0
   });
   const [loadingStats, setLoadingStats] = useState(true);
+
+  // INGRESO DEL DÍA (nuevo)
+  const [dailyRevenue, setDailyRevenue] = useState(0);
+  const [loadingRevenue, setLoadingRevenue] = useState(true);
 
   // Recargas
   const [pendingRecharges, setPendingRecharges] = useState([]);
@@ -74,19 +77,23 @@ const AdminDashboard = () => {
 
   // Formato de moneda
   const formatCurrency = (amount) => {
-    const num = parseFloat(amount);
-    if (isNaN(num)) return 'Bs 0,00';
-    const formatted = num.toFixed(2).replace('.', ',');
-    return `Bs ${formatted}`;
+    const num = Number(amount || 0);
+    if (!Number.isFinite(num)) return 'Bs 0,00';
+    return `Bs ${num.toFixed(2).replace('.', ',')}`;
   };
 
-  // Carga de estadísticas
+  // Carga de estadísticas (counts)
   const fetchStats = useCallback(async () => {
     setLoadingStats(true);
     try {
       const response = await adminAPI.getStats();
-      // response.data expected to be the stats object
-      setStats(response.data);
+      const data = response?.data ?? {};
+      setStats({
+        totalUsers: data.totalUsers ?? data.total_users ?? 0,
+        totalDrivers: data.totalDrivers ?? data.total_drivers ?? 0,
+        totalTrips: data.totalTrips ?? data.total_trips ?? 0,
+        activeTrips: data.activeTrips ?? data.active_trips ?? 0
+      });
       setMessage({ text: '', type: 'info' });
     } catch (error) {
       console.error('Error fetching stats:', error);
@@ -102,12 +109,28 @@ const AdminDashboard = () => {
     }
   }, []);
 
+  // Carga del ingreso del día (nuevo) — usa adminAPI.getRevenue('day')
+  const fetchDailyRevenue = useCallback(async () => {
+    setLoadingRevenue(true);
+    try {
+      const res = await adminAPI.getRevenue('day');
+      const payload = res?.data ?? {};
+      const total = payload.total ?? 0;
+      setDailyRevenue(Number(total || 0));
+    } catch (err) {
+      console.error('Error fetching daily revenue:', err);
+      setDailyRevenue(0);
+    } finally {
+      setLoadingRevenue(false);
+    }
+  }, []);
+
   // Carga recargas
   const fetchPendingRecharges = useCallback(async () => {
     setLoadingRecharges(true);
     try {
       const response = await rechargeAPI.getPending();
-      setPendingRecharges(response.data);
+      setPendingRecharges(response.data ?? []);
     } catch (error) {
       console.error('Error fetching pending recharges:', error);
       setMessage({ text: 'Error al cargar recargas pendientes', type: 'error' });
@@ -121,7 +144,7 @@ const AdminDashboard = () => {
     setLoadingRoutes(true);
     try {
       const response = await routeAPI.getAll();
-      setRoutes(response.data);
+      setRoutes(response.data ?? []);
     } catch (error) {
       console.error('Error fetching routes:', error);
       setMessage({ text: 'Error al cargar las rutas', type: 'error' });
@@ -135,7 +158,7 @@ const AdminDashboard = () => {
     setLoadingUsers(true);
     try {
       const response = await adminAPI.getAllUsers();
-      setUsers(response.data);
+      setUsers(response.data ?? []);
     } catch (error) {
       console.error('Error fetching users:', error);
       setMessage({ text: 'Error al cargar la lista de usuarios. Asegúrate de tener permisos.', type: 'error' });
@@ -150,21 +173,28 @@ const AdminDashboard = () => {
     fetchRoutes();
     fetchStats();
     fetchPendingRecharges();
+    fetchDailyRevenue();
+
     const pollRechargesInterval = setInterval(() => {
       fetchPendingRecharges();
     }, 15000);
-    return () => clearInterval(pollRechargesInterval);
-  }, [fetchAllUsers, fetchRoutes, fetchPendingRecharges, fetchStats]);
+
+    // actualizamos daily revenue con menos frecuencia (cada 60s)
+    const revInterval = setInterval(() => fetchDailyRevenue(), 60000);
+
+    return () => {
+      clearInterval(pollRechargesInterval);
+      clearInterval(revInterval);
+    };
+  }, [fetchAllUsers, fetchRoutes, fetchPendingRecharges, fetchStats, fetchDailyRevenue]);
 
   // Detectar location.state.tab o query param ?tab=#
   useEffect(() => {
-    // preferimos state.tab (puesto por el Header) y luego fallback a search param
     const sTab = location?.state?.tab;
     if (typeof sTab !== 'undefined' && sTab !== null) {
       const idx = Number(sTab);
       if (!Number.isNaN(idx)) {
         gotoTabAndScroll(idx);
-        // limpiar state para evitar re-trigger al recargar
         navigate(location.pathname, { replace: true, state: {} });
         return;
       }
@@ -186,6 +216,7 @@ const AdminDashboard = () => {
       setMessage({ text: 'Recarga aprobada y saldo sumado exitosamente.', type: 'success' });
       setPendingRecharges(prev => prev.filter(r => r.id !== rechargeId));
       fetchStats();
+      fetchDailyRevenue();
     } catch (error) {
       console.error('Error confirming recharge:', error);
       setMessage({ text: error.response?.data?.error || 'Error al aprobar la recarga. Verifique la conexión.', type: 'error' });
@@ -217,6 +248,7 @@ const AdminDashboard = () => {
       setPendingRecharges(prev => prev.filter(r => r.id !== rejectingId));
       setMessage({ text: 'Recarga rechazada y usuario notificado.', type: 'success' });
       await fetchStats();
+      await fetchDailyRevenue();
       handleCloseReject();
     } catch (error) {
       console.error('Error rechazando recarga:', error);
@@ -267,7 +299,6 @@ const AdminDashboard = () => {
         const createdId = created?.id || created?.user?.id || created?.userId || created?.data?.id || null;
         const createdRole = created?.role || created?.user?.role || created?.data?.role || null;
 
-        // Usar la instancia `api` para comprobar header Authorization si es necesario
         const authHeader = api.defaults?.headers?.common?.['Authorization'];
 
         if (roleToCreate === 'admin' && createdRole && createdRole !== 'admin') {
@@ -375,7 +406,6 @@ const AdminDashboard = () => {
   // Navegar a sección de usuarios y abrir la pestaña adecuada
   const gotoTabAndScroll = (tabIndex) => {
     setSelectedTab(tabIndex);
-    // hacer scroll suave al área de gestión de usuarios
     setTimeout(() => {
       const el = document.getElementById('user-management');
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -392,7 +422,7 @@ const AdminDashboard = () => {
             👨‍💼 Panel de Administración
           </Typography>
 
-          {/* Botones principales (creación) separados y visibles */}
+          {/* Botones principales (creación) */}
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button variant="contained" color="primary" startIcon={<AddIcon />} onClick={() => handleOpenRouteModal(null)}>
               Crear Ruta
@@ -470,7 +500,6 @@ const AdminDashboard = () => {
             <Paper sx={{ p: 3, height: '100%' }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h5" color="primary">🛣️ Gestión de Rutas</Typography>
-                {/* removed duplicate Crear Ruta button here (creation available on top) */}
               </Box>
               {loadingRoutes ? (
                 <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
@@ -530,94 +559,93 @@ const AdminDashboard = () => {
             </Paper>
           </Grid>
 
-          {loadingStats ? (
+          {/* INGRESOS DEL DÍA (full width) */}
+          {loadingRevenue ? (
             <Grid item xs={12}><Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box></Grid>
           ) : (
-            <>
-              <Grid item xs={12}>
-                <Card sx={{ bgcolor: '#4caf50', display: 'flex', alignItems: 'center', p: 2, height: '100px' }}>
-                  <CardContent sx={{ pb: '16px !important' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                      <AttachMoneyIcon sx={{ color: 'white', mr: 1, fontSize: '1.8rem' }} />
-                      <Typography variant="body2" color="white" sx={{ fontWeight: 'bold' }}>INGRESOS TOTALES</Typography>
-                    </Box>
-                    <Typography variant="h3" sx={{ fontWeight: 700, color: 'white' }}>{formatCurrency(stats.totalRevenue)}</Typography>
+            <Grid item xs={12}>
+              <Card sx={{ bgcolor: '#4caf50', display: 'flex', alignItems: 'center', p: 2, height: '100px' }}>
+                <CardContent sx={{ pb: '16px !important' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                    <AttachMoneyIcon sx={{ color: 'white', mr: 1, fontSize: '1.8rem' }} />
+                    <Typography variant="body2" color="white" sx={{ fontWeight: 'bold' }}>INGRESOS DEL DÍA</Typography>
+                  </Box>
+                  <Typography variant="h3" sx={{ fontWeight: 700, color: 'white' }}>{formatCurrency(dailyRevenue)}</Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
+
+          {/* Estadísticas en tarjetas (counts basados en usuarios y rutas cargados) */}
+          <Grid item xs={12}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card sx={{ cursor: 'pointer' }} onClick={() => gotoTabAndScroll(1)}>
+                  <CardContent>
+                    <Typography color="textSecondary">Total Usuarios</Typography>
+                    <Typography variant="h4">{totalUsersCount}</Typography>
                   </CardContent>
                 </Card>
               </Grid>
 
-              <Grid item xs={12}>
-                <Grid container spacing={3}>
-                  <Grid item xs={12} sm={6} md={2.4}>
-                    <Card sx={{ cursor: 'pointer' }} onClick={() => gotoTabAndScroll(1)}>
-                      <CardContent>
-                        <Typography color="textSecondary">Total Usuarios</Typography>
-                        <Typography variant="h4">{totalUsersCount}</Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-
-                  <Grid item xs={12} sm={6} md={2.4}>
-                    <Card
-                      sx={{
-                        cursor: 'pointer',
-                        '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
-                        transition: 'transform 0.15s ease'
-                      }}
-                      onClick={() => gotoTabAndScroll(0)}
-                    >
-                      <CardContent>
-                        <Typography color="textSecondary">Conductores</Typography>
-                        <Typography variant="h4">{driversCount}</Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-
-                  <Grid item xs={12} sm={6} md={2.4}>
-                    <Card
-                      sx={{
-                        cursor: 'pointer',
-                        '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
-                        transition: 'transform 0.15s ease'
-                      }}
-                      onClick={() => gotoTabAndScroll(1)}
-                    >
-                      <CardContent>
-                        <Typography color="textSecondary">Pasajeros</Typography>
-                        <Typography variant="h4">{passengersCount}</Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-
-                  {/* Administradores - nueva tarjeta, igual que Pasajeros/Conductores */}
-                  <Grid item xs={12} sm={6} md={2.4}>
-                    <Card
-                      sx={{
-                        cursor: 'pointer',
-                        '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
-                        transition: 'transform 0.15s ease'
-                      }}
-                      onClick={() => gotoTabAndScroll(2)}
-                    >
-                      <CardContent>
-                        <Typography color="textSecondary">Administradores</Typography>
-                        <Typography variant="h4">{adminsCount}</Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-
-                  <Grid item xs={12} sm={6} md={2.4}>
-                    <Card>
-                      <CardContent>
-                        <Typography color="textSecondary">Rutas Activas</Typography>
-                        <Typography variant="h4">{activeRoutesCount}</Typography>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                </Grid>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
+                    transition: 'transform 0.15s ease'
+                  }}
+                  onClick={() => gotoTabAndScroll(0)}
+                >
+                  <CardContent>
+                    <Typography color="textSecondary">Conductores</Typography>
+                    <Typography variant="h4">{driversCount}</Typography>
+                  </CardContent>
+                </Card>
               </Grid>
-            </>
-          )}
+
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
+                    transition: 'transform 0.15s ease'
+                  }}
+                  onClick={() => gotoTabAndScroll(1)}
+                >
+                  <CardContent>
+                    <Typography color="textSecondary">Pasajeros</Typography>
+                    <Typography variant="h4">{passengersCount}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': { transform: 'translateY(-4px)', boxShadow: 3 },
+                    transition: 'transform 0.15s ease'
+                  }}
+                  onClick={() => gotoTabAndScroll(2)}
+                >
+                  <CardContent>
+                    <Typography color="textSecondary">Administradores</Typography>
+                    <Typography variant="h4">{adminsCount}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="textSecondary">Rutas Activas</Typography>
+                    <Typography variant="h4">{activeRoutesCount}</Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          </Grid>
 
           {/* ========================= */}
           {/* Balance diario por conductor */}
@@ -634,7 +662,6 @@ const AdminDashboard = () => {
               <Paper id="user-management" sx={{ p: 3 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                   <Typography variant="h5" gutterBottom color="primary">👥 Gestión de Usuarios</Typography>
-                  {/* top "Crear Usuario" is the single source of creation, removed duplicates */}
                 </Box>
 
                 {/* SOLO mostrar Tabs y contenido cuando haya una pestaña seleccionada */}

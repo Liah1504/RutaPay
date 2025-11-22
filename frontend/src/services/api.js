@@ -74,6 +74,7 @@ export const notificationsAPI = {
   getForAdmin: (limit = 50, type = null) => api.get('/notifications/admin', { params: { limit, type } })
 };
 
+// ------- ADMIN API (añadidas funciones de revenue) -------
 export const adminAPI = {
   getStats: () => api.get('/admin/stats'),
   getAllUsers: () => api.get('/admin/users'),
@@ -85,8 +86,14 @@ export const adminAPI = {
     try { return await api.post('/admin/users', payloadWithRole); } catch (err) { if (!err.response || err.response.status !== 404) throw err; }
     try { return await api.post('/users', payloadWithRole); } catch (err) { if (!err.response || err.response.status !== 404) throw err; }
     return await api.post('/auth/register', payloadWithRole);
-  }
+  },
+
+  // Nuevo: obtener ingresos por periodo (day|week|month)
+  getRevenue: (period = 'day') => api.get('/admin/revenue', { params: { period } }),
+  // Nuevo: obtener ingresos por rango start/end (YYYY-MM-DD)
+  getRevenueRange: (start, end) => api.get('/admin/revenue', { params: { start, end } })
 };
+// ----------------------------------------------------------
 
 export const paymentAPI = {
   executePayment: (paymentData) => api.post('/payment/pay', paymentData),
