@@ -9,6 +9,11 @@ import AdminDashboard from './pages/AdminDashboard';
 import SettingsPage from './pages/SettingsPage';
 import NotificationsPage from './pages/Notifications';
 
+// Importa las páginas nuevas que el Header usa (créalas si aún no existen)
+import UsersPage from './pages/UsersPage';
+import DriversPage from './pages/DriversPage';
+import Reports from './pages/Reports';
+
 // Componente para rutas protegidas
 const ProtectedRoute = ({ children, requiredRole }) => {
   const { user, loading } = useAuth();
@@ -85,7 +90,7 @@ function App() {
               } 
             />
             
-            {/* Ruta del administrador */}
+            {/* Ruta del administrador (panel principal) */}
             <Route 
               path="/admin" 
               element={
@@ -94,8 +99,42 @@ function App() {
                 </ProtectedRoute>
               } 
             />
-            
-            {/* Página de Ajustes - accesible solo para conductor y pasajero (según tu petición) */}
+
+            {/* Rutas administrativas separadas (para que los enlaces del Header no hagan 404) */}
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <UsersPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/drivers"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <DriversPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/reports"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <Reports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/settings"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Página de Ajustes - accesible solo para conductor y pasajero (tu ruta original) */}
             <Route
               path="/settings"
               element={
@@ -105,7 +144,7 @@ function App() {
               }
             />
 
-            {/* Nueva: Notificaciones (cualquier usuario autenticado) */}
+            {/* Notificaciones (cualquier usuario autenticado) */}
             <Route
               path="/notifications"
               element={

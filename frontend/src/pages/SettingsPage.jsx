@@ -40,7 +40,7 @@ export default function SettingsPage() {
   useEffect(() => {
     // liberar objectURL si creamos uno
     return () => {
-      if (avatarPreview && avatarPreview.startsWith('blob:')) {
+      if (avatarPreview && typeof avatarPreview === 'string' && avatarPreview.startsWith('blob:')) {
         URL.revokeObjectURL(avatarPreview);
       }
     };
@@ -49,9 +49,10 @@ export default function SettingsPage() {
   const handleChange = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
 
   const goHomeForRole = () => {
-    const role = user?.role || 'passenger';
-    const path = role === 'driver' ? '/driver' : role === 'admin' ? '/admin' : '/passenger';
-    return path;
+    const role = (user?.role || 'passenger').toString().toLowerCase();
+    if (role === 'driver') return '/driver';
+    if (role === 'admin') return '/admin';
+    return '/passenger';
   };
 
   const onSelectFile = (file) => {
@@ -84,7 +85,8 @@ export default function SettingsPage() {
         fd.append('email', form.email);
         fd.append('phone', form.phone);
 
-        if (user?.role && user.role !== 'passenger') {
+        // Solo incluir campos de vehículo para drivers (no para admin)
+        if ((user?.role || '').toString().toLowerCase() === 'driver') {
           fd.append('vehicle', form.vehicle);
           fd.append('plate', form.plate);
           fd.append('license_number', form.license_number);
@@ -95,13 +97,11 @@ export default function SettingsPage() {
 
         // backend debe devolver el usuario actualizado con 'avatar' = URL pública
         if (res?.data) {
+          setUser && setUser(res.data);
+          // opcional: guardar avatar pública en localStorage si quieres persistencia
           try {
-            setUser && setUser(res.data);
-            // opcional: guardar avatar pública en localStorage si quieres persistencia
-            try {
-              if (res.data.avatar) localStorage.setItem('rutapay_avatar', res.data.avatar);
-            } catch (err) { /* ignore */ }
-          } catch (err) {}
+            if (res.data.avatar) localStorage.setItem('rutapay_avatar', res.data.avatar);
+          } catch (err) { /* ignore */ }
         }
       } else {
         // 2) Sin avatar -> envío normal JSON
@@ -109,16 +109,15 @@ export default function SettingsPage() {
           email: form.email,
           phone: form.phone
         };
-        if (user?.role && user.role !== 'passenger') {
+        // Solo incluir campos de vehículo para drivers (no para admin)
+        if ((user?.role || '').toString().toLowerCase() === 'driver') {
           payload.vehicle = form.vehicle;
           payload.plate = form.plate;
           payload.license_number = form.license_number;
         }
         const res = await userAPI.updateProfile(payload);
         if (res?.data) {
-          try {
-            setUser && setUser(res.data);
-          } catch (err) {}
+          setUser && setUser(res.data);
         }
       }
 
@@ -140,13 +139,16 @@ export default function SettingsPage() {
     navigate(homePath);
   };
 
+  // Mostrar campos de vehículo SOLO para conductores
+  const showVehicleFields = (user?.role || '').toString().toLowerCase() === 'driver';
+
   return (
     <Container maxWidth="sm" sx={{ mt: 4 }}>
       <Paper sx={{ p: 4 }}>
         <Typography variant="h5" sx={{ mb: 3 }}>Ajustes de perfil</Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          <Avatar src={avatarPreview || undefined} sx={{ width: 72, height: 72 }} />
+          <Avatar src={avatarPreview || undefined} sx={{ width: 72, height: 72 }}>{(user?.name || '').charAt(0)}</Avatar>
           <Box>
             <input
               type="file"
@@ -155,11 +157,11 @@ export default function SettingsPage() {
               style={{ display: 'none' }}
               onChange={handleFileInput}
             />
-            <Button variant="contained" onClick={handleClickChangePhoto}>Cambiar foto</Button>
+            <Button variant="contained" onClick={handleClickChangePhoto} disabled={loading}>Cambiar foto</Button>
             <Button sx={{ ml: 1 }} variant="outlined" onClick={() => {
               setAvatarFile(null);
               setAvatarPreview(user?.avatar || null);
-            }}>Eliminar</Button>
+            }} disabled={loading}>Eliminar</Button>
             <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
               JPG/PNG, máximo recomendado 2MB.
             </Typography>
@@ -183,7 +185,7 @@ export default function SettingsPage() {
             onChange={handleChange('phone')}
           />
 
-          {user?.role && user.role !== 'passenger' && (
+          {showVehicleFields && (
             <>
               <TextField label="Unidad/Tipo de vehículo" fullWidth sx={{ mb: 2 }} value={form.vehicle} onChange={handleChange('vehicle')} />
               <TextField label="Placa" fullWidth sx={{ mb: 2 }} value={form.plate} onChange={handleChange('plate')} />
@@ -193,7 +195,7 @@ export default function SettingsPage() {
 
           <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
             <Button type="submit" variant="contained" disabled={loading}>{loading ? 'Guardando...' : 'Guardar cambios'}</Button>
-            <Button variant="outlined" onClick={handleCancel}>Cancelar</Button>
+            <Button variant="outlined" onClick={handleCancel} disabled={loading}>Cancelar</Button>
           </Box>
 
           {msg && (

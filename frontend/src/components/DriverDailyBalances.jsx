@@ -56,7 +56,7 @@ const DriverDailyBalances = () => {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 1 }}>Balance diario por conductor</Typography>
+      <Typography variant="h6" sx={{ mb: 1 }}>Balance diario por Conductor</Typography>
 
       <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'center' }}>
         <TextField type="date" label="Desde" value={from} onChange={(e) => setFrom(e.target.value)} InputLabelProps={{ shrink: true }} size="small" />

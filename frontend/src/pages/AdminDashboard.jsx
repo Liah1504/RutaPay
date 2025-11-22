@@ -17,7 +17,7 @@ import Header from '../components/Header';
 import { rechargeAPI, routeAPI, adminAPI } from '../services/api';
 import UserForm from '../components/UserForm';
 import RouteForm from '../components/RouteForm';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api'; // instancia centralizada axios
 
 // Nuevo: componente de reporte (asegúrate de tener src/components/DriverDailyBalances.jsx)
@@ -26,6 +26,7 @@ import DriverDailyBalances from '../components/DriverDailyBalances';
 const AdminDashboard = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Estadísticas
   const [stats, setStats] = useState({
@@ -154,6 +155,28 @@ const AdminDashboard = () => {
     }, 15000);
     return () => clearInterval(pollRechargesInterval);
   }, [fetchAllUsers, fetchRoutes, fetchPendingRecharges, fetchStats]);
+
+  // Detectar location.state.tab o query param ?tab=#
+  useEffect(() => {
+    // preferimos state.tab (puesto por el Header) y luego fallback a search param
+    const sTab = location?.state?.tab;
+    if (typeof sTab !== 'undefined' && sTab !== null) {
+      const idx = Number(sTab);
+      if (!Number.isNaN(idx)) {
+        gotoTabAndScroll(idx);
+        // limpiar state para evitar re-trigger al recargar
+        navigate(location.pathname, { replace: true, state: {} });
+        return;
+      }
+    }
+    const params = new URLSearchParams(location.search);
+    const q = params.get('tab');
+    if (q) {
+      const idx = Number(q);
+      if (!Number.isNaN(idx)) gotoTabAndScroll(idx);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location?.key]);
 
   // Handlers recargas
   const handleConfirmRecharge = async (rechargeId) => {
@@ -605,251 +628,254 @@ const AdminDashboard = () => {
           </Grid>
           {/* ========================= */}
 
-          <Grid item xs={12}>
-            <Paper id="user-management" sx={{ p: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h5" gutterBottom color="primary">👥 Gestión de Usuarios</Typography>
-                {/* top "Crear Usuario" is the single source of creation, removed duplicates */}
-              </Box>
+          {/* Mostrar Gestión de Usuarios SOLO cuando se haya seleccionado una pestaña */}
+          {selectedTab !== null && (
+            <Grid item xs={12}>
+              <Paper id="user-management" sx={{ p: 3 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h5" gutterBottom color="primary">👥 Gestión de Usuarios</Typography>
+                  {/* top "Crear Usuario" is the single source of creation, removed duplicates */}
+                </Box>
 
-              {/* SOLO mostrar Tabs y contenido cuando haya una pestaña seleccionada */}
-              {selectedTab !== null && (
-                <>
-                  <Tabs value={selectedTab} onChange={handleTabChange} sx={{ mb: 2 }}>
-                    <Tab label="Conductores" value={0} />
-                    <Tab label="Pasajeros" value={1} />
-                    <Tab label="Administradores" value={2} />
-                    <Tab label="Rutas Activas" value={3} />
-                  </Tabs>
+                {/* SOLO mostrar Tabs y contenido cuando haya una pestaña seleccionada */}
+                {selectedTab !== null && (
+                  <>
+                    <Tabs value={selectedTab} onChange={handleTabChange} sx={{ mb: 2 }}>
+                      <Tab label="Conductores" value={0} />
+                      <Tab label="Pasajeros" value={1} />
+                      <Tab label="Administradores" value={2} />
+                      <Tab label="Rutas Activas" value={3} />
+                    </Tabs>
 
-                  {/* Contenido según pestaña */}
-                  {selectedTab === 0 && (
-                    <>
-                      {loadingUsers ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
-                      ) : drivers.length === 0 ? (
-                        <Typography color="text.secondary">No hay conductores registrados.</Typography>
-                      ) : (
-                        <TableContainer>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>ID</TableCell>
-                                <TableCell>Nombre</TableCell>
-                                <TableCell>Email</TableCell>
-                                <TableCell>Rol</TableCell>
-                                <TableCell>Balance (Bs)</TableCell>
-                                <TableCell align="right">Acciones</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {drivers.map((u) => (
-                                <TableRow key={u.id}>
-                                  <TableCell>{u.id}</TableCell>
-                                  <TableCell>{u.name}</TableCell>
-                                  <TableCell>{u.email}</TableCell>
-                                  <TableCell>
-                                    <Chip
-                                      label={(u.role || '').toString().toUpperCase()}
-                                      color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
-                                      size="small"
-                                    />
-                                  </TableCell>
-                                  <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
-                                  <TableCell align="right">
-                                    <Tooltip title="Editar Usuario">
-                                      <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                    {u.id !== user.id && (
-                                      <Tooltip title="Eliminar Usuario">
-                                        <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
-                                          <DeleteIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
-                                    )}
-                                  </TableCell>
+                    {/* Contenido según pestaña */}
+                    {selectedTab === 0 && (
+                      <>
+                        {loadingUsers ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                        ) : drivers.length === 0 ? (
+                          <Typography color="text.secondary">No hay conductores registrados.</Typography>
+                        ) : (
+                          <TableContainer>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>ID</TableCell>
+                                  <TableCell>Nombre</TableCell>
+                                  <TableCell>Email</TableCell>
+                                  <TableCell>Rol</TableCell>
+                                  <TableCell>Balance (Bs)</TableCell>
+                                  <TableCell align="right">Acciones</TableCell>
                                 </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </>
-                  )}
-
-                  {selectedTab === 1 && (
-                    <>
-                      {loadingUsers ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
-                      ) : passengers.length === 0 ? (
-                        <Typography color="text.secondary">No hay pasajeros registrados.</Typography>
-                      ) : (
-                        <TableContainer>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>ID</TableCell>
-                                <TableCell>Nombre</TableCell>
-                                <TableCell>Email</TableCell>
-                                <TableCell>Rol</TableCell>
-                                <TableCell>Balance (Bs)</TableCell>
-                                <TableCell align="right">Acciones</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {passengers.map((u) => (
-                                <TableRow key={u.id}>
-                                  <TableCell>{u.id}</TableCell>
-                                  <TableCell>{u.name}</TableCell>
-                                  <TableCell>{u.email}</TableCell>
-                                  <TableCell>
-                                    <Chip
-                                      label={(u.role || '').toString().toUpperCase()}
-                                      color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
-                                      size="small"
-                                    />
-                                  </TableCell>
-                                  <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
-                                  <TableCell align="right">
-                                    <Tooltip title="Editar Usuario">
-                                      <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                    {u.id !== user.id && (
-                                      <Tooltip title="Eliminar Usuario">
-                                        <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
-                                          <DeleteIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
-                                    )}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </>
-                  )}
-
-                  {selectedTab === 2 && (
-                    <>
-                      {loadingUsers ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
-                      ) : admins.length === 0 ? (
-                        <Typography color="text.secondary">No hay administradores registrados.</Typography>
-                      ) : (
-                        <TableContainer>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>ID</TableCell>
-                                <TableCell>Nombre</TableCell>
-                                <TableCell>Email</TableCell>
-                                <TableCell>Rol</TableCell>
-                                <TableCell>Balance (Bs)</TableCell>
-                                <TableCell align="right">Acciones</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {admins.map((u) => (
-                                <TableRow key={u.id}>
-                                  <TableCell>{u.id}</TableCell>
-                                  <TableCell>{u.name}</TableCell>
-                                  <TableCell>{u.email}</TableCell>
-                                  <TableCell>
-                                    <Chip
-                                      label={(u.role || '').toString().toUpperCase()}
-                                      color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
-                                      size="small"
-                                    />
-                                  </TableCell>
-                                  <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
-                                  <TableCell align="right">
-                                    <Tooltip title="Editar Usuario">
-                                      <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                    {u.id !== user.id && (
-                                      <Tooltip title="Eliminar Usuario">
-                                        <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
-                                          <DeleteIcon fontSize="small" />
-                                        </IconButton>
-                                      </Tooltip>
-                                    )}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </>
-                  )}
-
-                  {selectedTab === 3 && (
-                    <>
-                      {loadingRoutes ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
-                      ) : activeRoutes.length === 0 ? (
-                        <Typography color="text.secondary">No hay rutas activas.</Typography>
-                      ) : (
-                        <TableContainer>
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Ruta</TableCell>
-                                <TableCell>Tarifa (Bs)</TableCell>
-                                <TableCell>Estado</TableCell>
-                                <TableCell align="right">Acción</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {activeRoutes.map((r) => (
-                                <TableRow key={r.id}>
-                                  <TableCell>{r.name}</TableCell>
-                                  <TableCell>{parseFloat(r.fare || 0).toFixed(2)}</TableCell>
-                                  <TableCell>
-                                    <Chip label="Activa" color="success" size="small" />
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <Tooltip title="Editar Ruta">
-                                      <IconButton size="small" onClick={() => handleOpenRouteModal(r)}>
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                    <Tooltip title="Desactivar Ruta">
-                                      <IconButton
+                              </TableHead>
+                              <TableBody>
+                                {drivers.map((u) => (
+                                  <TableRow key={u.id}>
+                                    <TableCell>{u.id}</TableCell>
+                                    <TableCell>{u.name}</TableCell>
+                                    <TableCell>{u.email}</TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        label={(u.role || '').toString().toUpperCase()}
+                                        color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
                                         size="small"
-                                        onClick={() => {
-                                          routeAPI.update(r.id, { ...r, is_active: false })
-                                            .then(() => { setMessage({ text: 'Ruta desactivada.', type: 'success' }); fetchRoutes(); fetchStats(); })
-                                            .catch(err => {
-                                              console.error('Error deactivation route:', err);
-                                              setMessage({ text: err?.response?.data?.error || 'Error al actualizar ruta', type: 'error' });
-                                            });
-                                        }}
-                                      >
-                                        <CloseIcon fontSize="small" color="error" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  </TableCell>
+                                      />
+                                    </TableCell>
+                                    <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
+                                    <TableCell align="right">
+                                      <Tooltip title="Editar Usuario">
+                                        <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
+                                          <EditIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                      {u.id !== user.id && (
+                                        <Tooltip title="Eliminar Usuario">
+                                          <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
+                                            <DeleteIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </>
+                    )}
+
+                    {selectedTab === 1 && (
+                      <>
+                        {loadingUsers ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                        ) : passengers.length === 0 ? (
+                          <Typography color="text.secondary">No hay pasajeros registrados.</Typography>
+                        ) : (
+                          <TableContainer>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>ID</TableCell>
+                                  <TableCell>Nombre</TableCell>
+                                  <TableCell>Email</TableCell>
+                                  <TableCell>Rol</TableCell>
+                                  <TableCell>Balance (Bs)</TableCell>
+                                  <TableCell align="right">Acciones</TableCell>
                                 </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </Paper>
-          </Grid>
+                              </TableHead>
+                              <TableBody>
+                                {passengers.map((u) => (
+                                  <TableRow key={u.id}>
+                                    <TableCell>{u.id}</TableCell>
+                                    <TableCell>{u.name}</TableCell>
+                                    <TableCell>{u.email}</TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        label={(u.role || '').toString().toUpperCase()}
+                                        color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
+                                        size="small"
+                                      />
+                                    </TableCell>
+                                    <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
+                                    <TableCell align="right">
+                                      <Tooltip title="Editar Usuario">
+                                        <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
+                                          <EditIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                      {u.id !== user.id && (
+                                        <Tooltip title="Eliminar Usuario">
+                                          <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
+                                            <DeleteIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </>
+                    )}
+
+                    {selectedTab === 2 && (
+                      <>
+                        {loadingUsers ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                        ) : admins.length === 0 ? (
+                          <Typography color="text.secondary">No hay administradores registrados.</Typography>
+                        ) : (
+                          <TableContainer>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>ID</TableCell>
+                                  <TableCell>Nombre</TableCell>
+                                  <TableCell>Email</TableCell>
+                                  <TableCell>Rol</TableCell>
+                                  <TableCell>Balance (Bs)</TableCell>
+                                  <TableCell align="right">Acciones</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {admins.map((u) => (
+                                  <TableRow key={u.id}>
+                                    <TableCell>{u.id}</TableCell>
+                                    <TableCell>{u.name}</TableCell>
+                                    <TableCell>{u.email}</TableCell>
+                                    <TableCell>
+                                      <Chip
+                                        label={(u.role || '').toString().toUpperCase()}
+                                        color={u.role === 'admin' ? 'secondary' : u.role === 'driver' ? 'warning' : 'info'}
+                                        size="small"
+                                      />
+                                    </TableCell>
+                                    <TableCell>{parseFloat(u.balance || 0).toFixed(2)}</TableCell>
+                                    <TableCell align="right">
+                                      <Tooltip title="Editar Usuario">
+                                        <IconButton size="small" onClick={() => handleOpenUserModal(u)}>
+                                          <EditIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                      {u.id !== user.id && (
+                                        <Tooltip title="Eliminar Usuario">
+                                          <IconButton size="small" onClick={() => handleDeleteUser(u.id, u.name)} color="error">
+                                            <DeleteIcon fontSize="small" />
+                                          </IconButton>
+                                        </Tooltip>
+                                      )}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </>
+                    )}
+
+                    {selectedTab === 3 && (
+                      <>
+                        {loadingRoutes ? (
+                          <Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box>
+                        ) : activeRoutes.length === 0 ? (
+                          <Typography color="text.secondary">No hay rutas activas.</Typography>
+                        ) : (
+                          <TableContainer>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Ruta</TableCell>
+                                  <TableCell>Tarifa (Bs)</TableCell>
+                                  <TableCell>Estado</TableCell>
+                                  <TableCell align="right">Acción</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {activeRoutes.map((r) => (
+                                  <TableRow key={r.id}>
+                                    <TableCell>{r.name}</TableCell>
+                                    <TableCell>{parseFloat(r.fare || 0).toFixed(2)}</TableCell>
+                                    <TableCell>
+                                      <Chip label="Activa" color="success" size="small" />
+                                    </TableCell>
+                                    <TableCell align="right">
+                                      <Tooltip title="Editar Ruta">
+                                        <IconButton size="small" onClick={() => handleOpenRouteModal(r)}>
+                                          <EditIcon fontSize="small" />
+                                        </IconButton>
+                                      </Tooltip>
+                                      <Tooltip title="Desactivar Ruta">
+                                        <IconButton
+                                          size="small"
+                                          onClick={() => {
+                                            routeAPI.update(r.id, { ...r, is_active: false })
+                                              .then(() => { setMessage({ text: 'Ruta desactivada.', type: 'success' }); fetchRoutes(); fetchStats(); })
+                                              .catch(err => {
+                                                console.error('Error deactivation route:', err);
+                                                setMessage({ text: err?.response?.data?.error || 'Error al actualizar ruta', type: 'error' });
+                                              });
+                                          }}
+                                        >
+                                          <CloseIcon fontSize="small" color="error" />
+                                        </IconButton>
+                                      </Tooltip>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </Paper>
+            </Grid>
+          )}
         </Grid>
 
         {/* Dialogs ... (RouteForm, UserForm, Reject) */}
