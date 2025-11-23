@@ -9,10 +9,11 @@ import { useNavigate } from 'react-router-dom';
 /**
  * SettingsPage
  * - Permite cambiar foto y editar email/phone.
- * - El botón "Eliminar" junto a la foto ha sido eliminado (ya no aparece).
- * - Campos de vehículo (vehicle/plate/license) se muestran SOLO si el usuario es conductor.
- * - No se guarda la URL blob en localStorage; se revoca al desmontar.
+ * - Si se sube imagen, se envía multipart/form-data; si no, se envía JSON.
+ * - Campos de vehículo se muestran solo para conductores.
+ * - Revoca objectURL al desmontar.
  */
+
 export default function SettingsPage() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
@@ -28,7 +29,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState(null);
 
-  // local state para la imagen preview (NO se guarda en localStorage)
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(null);
 
@@ -41,13 +41,11 @@ export default function SettingsPage() {
         plate: user.placa || '',
         license_number: user.license_number || user.license || ''
       });
-      // preview inicial = avatar público (si existe)
       setAvatarPreview(user?.avatar || null);
     }
   }, [user]);
 
   useEffect(() => {
-    // liberar objectURL si creamos uno al desmontar o al cambiar preview
     return () => {
       if (avatarPreview && typeof avatarPreview === 'string' && avatarPreview.startsWith('blob:')) {
         try { URL.revokeObjectURL(avatarPreview); } catch (e) { /* ignore */ }
@@ -57,7 +55,7 @@ export default function SettingsPage() {
 
   const handleChange = (key) => (e) => setForm(f => ({ ...f, [key]: e.target.value }));
 
-  const goHomeForRole = () => {
+  const getHomeForRole = () => {
     const role = (user?.role || 'passenger').toString().toLowerCase();
     if (role === 'driver') return '/driver';
     if (role === 'admin') return '/admin';
@@ -69,7 +67,6 @@ export default function SettingsPage() {
     setAvatarFile(file);
     const url = URL.createObjectURL(file);
     setAvatarPreview(url);
-    // NO guardar blob URL en localStorage
   };
 
   const handleFileInput = (e) => {
@@ -87,34 +84,24 @@ export default function SettingsPage() {
     setMsg(null);
 
     try {
-      // 1) Si hay avatarFile -> subir con multipart/form-data
       if (avatarFile) {
         const fd = new FormData();
         fd.append('avatar', avatarFile);
         fd.append('email', form.email);
         fd.append('phone', form.phone);
 
-        // Solo incluir campos de vehículo para drivers (no para admin)
         if ((user?.role || '').toString().toLowerCase() === 'driver') {
           fd.append('vehicle', form.vehicle);
           fd.append('plate', form.plate);
           fd.append('license_number', form.license_number);
         }
 
-        // Esperamos la respuesta del servidor que debe devolver el perfil actualizado
         const res = await userAPI.updateProfileForm(fd);
-
-        // backend debe devolver el usuario actualizado con 'avatar' = URL pública
         if (res?.data) {
           setUser && setUser(res.data);
         }
       } else {
-        // 2) Sin avatar -> envío normal JSON
-        const payload = {
-          email: form.email,
-          phone: form.phone
-        };
-        // Solo incluir campos de vehículo para drivers (no para admin)
+        const payload = { email: form.email, phone: form.phone };
         if ((user?.role || '').toString().toLowerCase() === 'driver') {
           payload.vehicle = form.vehicle;
           payload.plate = form.plate;
@@ -126,8 +113,7 @@ export default function SettingsPage() {
         }
       }
 
-      // Navegar al inicio y mostrar mensaje
-      const homePath = goHomeForRole();
+      const homePath = getHomeForRole();
       navigate(homePath, { state: { successMessage: 'Guardado correctamente' } });
     } catch (err) {
       console.error('Error actualizando perfil:', err);
@@ -135,16 +121,18 @@ export default function SettingsPage() {
       setMsg({ type: 'error', text });
     } finally {
       setLoading(false);
+      // revoke created objectURL after upload to free memory
+      if (avatarPreview && typeof avatarPreview === 'string' && avatarPreview.startsWith('blob:')) {
+        try { URL.revokeObjectURL(avatarPreview); } catch (e) { /* ignore */ }
+      }
     }
   };
 
   const handleCancel = () => {
-    // no usamos localStorage para preview, así que sólo navegar
-    const homePath = goHomeForRole();
+    const homePath = getHomeForRole();
     navigate(homePath);
   };
 
-  // Mostrar campos de vehículo SOLO para conductores
   const showVehicleFields = (user?.role || '').toString().toLowerCase() === 'driver';
 
   return (
@@ -168,8 +156,9 @@ export default function SettingsPage() {
               <Button variant="contained" onClick={handleClickChangePhoto} disabled={loading}>
                 {loading ? 'Procesando...' : 'Cambiar foto'}
               </Button>
-
-              {/* El botón "Eliminar" ha sido eliminado por completo según lo solicitado. */}
+              <Button variant="outlined" onClick={() => { setAvatarFile(null); setAvatarPreview(user?.avatar || null); }} disabled={loading}>
+                Eliminar
+              </Button>
             </Stack>
             <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
               JPG/PNG, máximo recomendado 2MB.
@@ -180,50 +169,25 @@ export default function SettingsPage() {
         <form onSubmit={handleSubmit}>
           <Grid container spacing={2}>
             <Grid item xs={12}>
-              <TextField
-                label="Correo electrónico"
-                fullWidth
-                value={form.email}
-                onChange={handleChange('email')}
-              />
+              <TextField label="Correo electrónico" fullWidth value={form.email} onChange={handleChange('email')} />
             </Grid>
 
             <Grid item xs={12}>
-              <TextField
-                label="Teléfono"
-                fullWidth
-                value={form.phone}
-                onChange={handleChange('phone')}
-              />
+              <TextField label="Teléfono" fullWidth value={form.phone} onChange={handleChange('phone')} />
             </Grid>
 
             {showVehicleFields && (
               <>
                 <Grid item xs={12}>
-                  <TextField
-                    label="Unidad / Tipo de vehículo"
-                    fullWidth
-                    value={form.vehicle}
-                    onChange={handleChange('vehicle')}
-                  />
+                  <TextField label="Unidad / Tipo de vehículo" fullWidth value={form.vehicle} onChange={handleChange('vehicle')} />
                 </Grid>
 
                 <Grid item xs={12}>
-                  <TextField
-                    label="Placa"
-                    fullWidth
-                    value={form.plate}
-                    onChange={handleChange('plate')}
-                  />
+                  <TextField label="Placa" fullWidth value={form.plate} onChange={handleChange('plate')} />
                 </Grid>
 
                 <Grid item xs={12}>
-                  <TextField
-                    label="Número de licencia"
-                    fullWidth
-                    value={form.license_number}
-                    onChange={handleChange('license_number')}
-                  />
+                  <TextField label="Número de licencia" fullWidth value={form.license_number} onChange={handleChange('license_number')} />
                 </Grid>
               </>
             )}

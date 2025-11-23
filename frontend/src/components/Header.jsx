@@ -81,6 +81,7 @@ const Header = () => {
     if (location?.state && location.state.successMessage) {
       setSnackMsg(location.state.successMessage);
       setSnackOpen(true);
+      // clear state so it doesn't show again
       navigate(location.pathname, { replace: true, state: {} });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,7 +103,6 @@ const Header = () => {
     }
     try {
       setNotifsLoading(true);
-      // getForUser accepts limit; backend will handle unread filter if implemented
       const res = await notificationsAPI.getForUser(20);
       const items = Array.isArray(res?.data) ? res.data : [];
       setNotifications(items);
@@ -202,14 +202,44 @@ const Header = () => {
 
   const handleImgError = (e) => { try { if (e && e.currentTarget) e.currentTarget.src = DEFAULT_AVATAR; } catch {} };
 
-  // Drawer items => navigate to separate pages
-  const menuItems = [
-    { text: 'Inicio', icon: <HomeIcon />, action: () => { setOpen(false); navigate('/admin'); } },
-    { text: 'Usuarios', icon: <PeopleIcon />, action: () => { setOpen(false); navigate('/admin/users'); } },
-    { text: 'Conductores', icon: <GroupIcon />, action: () => { setOpen(false); navigate('/admin/drivers'); } },
-    { text: 'Reportes', icon: <AssessmentIcon />, action: () => { setOpen(false); navigate('/admin/reports'); } },
-    { text: 'Ajustes', icon: <SettingsIcon />, action: () => { setOpen(false); navigate('/admin/settings'); } }
+  // ALL possible menu entries (logical keys only)
+  const ALL_MENU = [
+    { key: 'home', text: 'Inicio', icon: <HomeIcon /> },
+    { key: 'users', text: 'Usuarios', icon: <PeopleIcon /> },
+    { key: 'drivers', text: 'Conductores', icon: <GroupIcon /> },
+    { key: 'reports', text: 'Reportes', icon: <AssessmentIcon /> },
+    { key: 'settings', text: 'Ajustes', icon: <SettingsIcon /> }
   ];
+
+  // allowed keys per role
+  const allowedKeysByRole = {
+    admin: ['home', 'users', 'drivers', 'reports', 'settings'],
+    driver: ['home', 'settings'],
+    passenger: ['home', 'settings']
+  };
+
+  const role = (user?.role || 'passenger').toString().toLowerCase();
+  const allowedKeys = allowedKeysByRole[role] || ['home', 'settings'];
+
+  // Helper to map logical keys to actual routes per role
+  const getRouteForKey = (key) => {
+    if (key === 'home') {
+      if (role === 'admin') return '/admin';
+      if (role === 'driver') return '/driver';
+      return '/passenger';
+    }
+    if (key === 'users') return '/admin/users';
+    if (key === 'drivers') return '/admin/drivers';
+    if (key === 'reports') return '/admin/reports';
+    if (key === 'settings') return '/settings';
+    return '/';
+  };
+
+  const menu = ALL_MENU.filter(m => allowedKeys.includes(m.key)).map(m => ({
+    ...m,
+    to: getRouteForKey(m.key),
+    action: () => { setOpen(false); navigate(getRouteForKey(m.key)); }
+  }));
 
   return (
     <>
@@ -250,16 +280,16 @@ const Header = () => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
             <Avatar sx={{ bgcolor: avatarBg, width: 56, height: 56, fontSize: 20, boxShadow: '0 2px 6px rgba(11,99,167,0.25)' }} src={avatarSrc || DEFAULT_AVATAR} />
             <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{user?.name || 'Administrador'}</Typography>
-              <Typography variant="body2" color="text.secondary">{user?.email || 'admin@rutapay.com'}</Typography>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{user?.name || 'Usuario'}</Typography>
+              <Typography variant="body2" color="text.secondary">{user?.email || ''}</Typography>
             </Box>
           </Box>
 
           <Divider sx={{ mb: 1 }} />
 
           <List>
-            {menuItems.map(item => (
-              <ListItemButton key={item.text} onClick={item.action} sx={{ borderRadius: 1, mb: 0.5 }}>
+            {menu.map(item => (
+              <ListItemButton key={item.key} onClick={item.action} sx={{ borderRadius: 1, mb: 0.5 }}>
                 <ListItemIcon sx={{ color: 'primary.main' }}>{item.icon}</ListItemIcon>
                 <ListItemText primary={item.text} />
               </ListItemButton>
@@ -269,7 +299,6 @@ const Header = () => {
           <Divider sx={{ my: 1 }} />
 
           <List>
-            {/* NOTE: 'Configuración' entry removed from Drawer as requested */}
             <ListItemButton onClick={async () => { setOpen(false); await handleLogout(); }} sx={{ borderRadius: 1, mt: 1 }}>
               <ListItemIcon><ExitToAppIcon /></ListItemIcon>
               <ListItemText primary="Cerrar sesión" />
@@ -280,11 +309,12 @@ const Header = () => {
 
       {/* Avatar menu */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={closeProfileMenu} transformOrigin={{ horizontal: 'right', vertical: 'top' }} anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}>
-        {/* Keep Ajustes here in the avatar menu if you want users to still access settings */}
-        <MenuItem onClick={() => { closeProfileMenu(); navigate('/admin/settings'); }}>
-          <ListItemIcon><SettingsIcon fontSize="small" /></ListItemIcon>
-          <ListItemText>Ajustes</ListItemText>
-        </MenuItem>
+        {allowedKeys.includes('settings') && (
+          <MenuItem onClick={() => { closeProfileMenu(); navigate(getRouteForKey('settings')); }}>
+            <ListItemIcon><SettingsIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Ajustes</ListItemText>
+          </MenuItem>
+        )}
         <Divider />
         <MenuItem onClick={handleLogout}>
           <ListItemIcon><ExitToAppIcon fontSize="small" /></ListItemIcon>
