@@ -8,6 +8,7 @@ import DriverDashboard from './pages/DriverDashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import SettingsPage from './pages/SettingsPage';
 import NotificationsPage from './pages/Notifications';
+import DriverPayments from './pages/DriverPayments';
 
 // Importa las páginas nuevas que el Header usa (créalas si aún no existen)
 import UsersPage from './pages/UsersPage';
@@ -39,7 +40,10 @@ const ProtectedRoute = ({ children, requiredRole }) => {
   // requiredRole puede ser string o array de strings
   if (requiredRole) {
     const allowed = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
-    if (!allowed.includes(user.role)) {
+    // normalize role strings
+    const roleNormalized = String(user.role || '').toLowerCase();
+    const allowedNormalized = allowed.map(a => String(a || '').toLowerCase());
+    if (!allowedNormalized.includes(roleNormalized)) {
       return <Navigate to="/" replace />;
     }
   }
@@ -130,6 +134,26 @@ function App() {
               element={
                 <ProtectedRoute requiredRole="admin">
                   <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Admin payments path (maps to admin dashboard to avoid 404 if header links here) */}
+            <Route
+              path="/admin/payments"
+              element={
+                <ProtectedRoute requiredRole="admin">
+                  <AdminDashboard />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Driver payments (separate page) */}
+            <Route
+              path="/driver/payments"
+              element={
+                <ProtectedRoute requiredRole="driver">
+                  <DriverPayments />
                 </ProtectedRoute>
               }
             />

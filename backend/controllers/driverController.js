@@ -1,12 +1,8 @@
 // backend/controllers/driversController.js
-// CONTROLADOR DE CONDUCTORES (versión para driver_code)
-// Busca historial por driver_code o resuelve driver_code desde el usuario autenticado.
-
 const db = require('../config/database');
 
 /**
  * Resuelve driver_code (string) desde query/params o desde req.user (drivers.user_id).
- * Lanza Error con .status cuando aplica.
  */
 const resolveDriverCode = async (req) => {
   const driverCodeQuery = req.query?.driver_code || req.params?.driver_code;
@@ -37,7 +33,6 @@ const resolveDriverCode = async (req) => {
 
 /**
  * GET /api/drivers/profile
- * Devuelve información del conductor (fila drivers + datos del usuario).
  */
 const getDriverProfile = async (req, res) => {
   try {
@@ -63,8 +58,111 @@ const getDriverProfile = async (req, res) => {
 };
 
 /**
+ * PUT /api/drivers/profile
+ * Actualiza (o crea) la fila drivers asociada al usuario autenticado.
+ * También puede actualizar campos del usuario (email, phone) si vienen en el payload.
+ *
+ * Body accepted (compatibilidad):
+ * - vehicle OR vehicle_type OR unit
+ * - plate OR vehicle_plate OR placa
+ * - license_number OR license
+ * - email, phone (opt)
+ *
+ * Devuelve la misma estructura que GET /api/drivers/profile (user + driver).
+ */
+const updateDriverProfile = async (req, res) => {
+  // require authenticated
+  try {
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ error: 'Usuario no autenticado' });
+
+    // Normalize incoming driver fields (compat)
+    const vehicle = req.body.vehicle ?? req.body.vehicle_type ?? req.body.unit ?? null;
+    const plate = req.body.plate ?? req.body.vehicle_plate ?? req.body.placa ?? null;
+    const license_number = req.body.license_number ?? req.body.license ?? null;
+
+    const email = req.body.email ?? null;
+    const phone = req.body.phone ?? null;
+
+    // Start transaction
+    await db.query('BEGIN');
+
+    // 1) Update users table if fields provided
+    if (email !== null || phone !== null) {
+      const updates = [];
+      const params = [];
+      let idx = 1;
+      if (email !== null) { updates.push(`email = $${idx++}`); params.push(email); }
+      if (phone !== null) { updates.push(`phone = $${idx++}`); params.push(phone); }
+      if (updates.length > 0) {
+        params.push(userId);
+        const qUser = `UPDATE users SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${params.length} RETURNING id`;
+        await db.query(qUser, params);
+      }
+    }
+
+    // 2) Check if a driver row exists for this user
+    const drvRes = await db.query('SELECT id FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+    if (drvRes.rows.length > 0) {
+      // update existing driver row
+      const driverId = drvRes.rows[0].id;
+      const fields = [];
+      const params = [];
+      let i = 1;
+      if (vehicle !== null) { fields.push(`vehicle_type = $${i++}`); params.push(vehicle); }
+      if (plate !== null) { fields.push(`vehicle_plate = $${i++}`); params.push(plate); }
+      if (license_number !== null) { fields.push(`license_number = $${i++}`); params.push(license_number); }
+
+      if (fields.length > 0) {
+        params.push(driverId);
+        const qUpdate = `UPDATE drivers SET ${fields.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = $${params.length}`;
+        await db.query(qUpdate, params);
+      }
+    } else {
+      // create driver row if any driver fields provided (or create empty driver row)
+      // Try to insert with provided fields; some apps require driver row exist
+      const insertFields = ['user_id'];
+      const insertValues = ['$1'];
+      const insertParams = [userId];
+      let j = 2;
+      if (vehicle !== null) { insertFields.push('vehicle_type'); insertValues.push(`$${j++}`); insertParams.push(vehicle); }
+      if (plate !== null) { insertFields.push('vehicle_plate'); insertValues.push(`$${j++}`); insertParams.push(plate); }
+      if (license_number !== null) { insertFields.push('license_number'); insertValues.push(`$${j++}`); insertParams.push(license_number); }
+
+      const qInsert = `INSERT INTO drivers (${insertFields.join(',')}) VALUES (${insertValues.join(',')}) RETURNING id`;
+      await db.query(qInsert, insertParams);
+    }
+
+    // Commit
+    await db.query('COMMIT');
+
+    // Finally return the joined profile (fresh)
+    const q = `
+      SELECT u.id as user_id, u.name, u.email, u.phone, u.balance,
+             d.id as driver_row_id, d.driver_code, d.license_number, d.vehicle_type, d.vehicle_plate,
+             d.is_available, d.current_location, d.rating, d.total_trips, d.created_at as driver_created_at, d.updated_at as driver_updated_at
+      FROM drivers d
+      JOIN users u ON d.user_id = u.id
+      WHERE d.user_id = $1
+      LIMIT 1
+    `;
+    const result = await db.query(q, [userId]);
+    if (result.rows.length === 0) {
+      // Edge: driver row still missing after logic; return user-level info as fallback
+      const ures = await db.query('SELECT id as user_id, name, email, phone, balance FROM users WHERE id = $1 LIMIT 1', [userId]);
+      return res.json(ures.rows[0] || {});
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    try { await db.query('ROLLBACK'); } catch (rbErr) { /* ignore rollback error */ }
+    console.error('updateDriverProfile error:', err && (err.stack || err.message || err));
+    const status = err?.status || 500;
+    return res.status(status).json({ error: err.message || 'Error actualizando perfil de conductor' });
+  }
+};
+
+/**
  * GET /api/drivers/payments
- * Busca payments por driver_code (string). También permite paginación limit/offset.
  */
 const getDriverPayments = async (req, res) => {
   try {
@@ -96,7 +194,6 @@ const getDriverPayments = async (req, res) => {
 
 /**
  * GET /api/drivers/payments/summary?date=YYYY-MM-DD
- * Resumen por día usando driver_code para filtrar.
  */
 const getDriverPaymentsSummary = async (req, res) => {
   try {
@@ -152,7 +249,6 @@ const getDriverPaymentsSummary = async (req, res) => {
 
 /**
  * GET /api/drivers/notifications
- * Lee las notificaciones desde la tabla notifications para el user_id autenticado.
  */
 const getDriverNotifications = async (req, res) => {
   try {
@@ -185,6 +281,7 @@ const getDriverNotifications = async (req, res) => {
 
 module.exports = {
   getDriverProfile,
+  updateDriverProfile,
   getDriverPayments,
   getDriverPaymentsSummary,
   getDriverNotifications

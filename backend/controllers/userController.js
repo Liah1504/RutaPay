@@ -1,6 +1,14 @@
-// backend/controllers/userController.js
-// MODIFICADO POR MÍ: mejoras en manejo de avatar, validaciones (email único), y retorno consistente de avatar URL.
-// Exporta: getProfile, updateProfile, uploadAvatarMiddleware
+/**
+ * backend/controllers/userController.js
+ *
+ * Controlador de perfil de usuario:
+ * - getProfile: devuelve perfil combinado (users + drivers si existe)
+ * - updateProfile: actualiza usuario y, si vienen campos de vehículo, crea/actualiza fila drivers
+ * - uploadAvatarMiddleware: multer middleware para procesar avatar (req.file.buffer)
+ *
+ * Conserva la lógica de manejo de avatar en disco + avatars.json para compatibilidad cuando la columna
+ * avatar no exista en la tabla users.
+ */
 
 const db = require('../config/database');
 const fs = require('fs');
@@ -10,14 +18,14 @@ const multer = require('multer');
 const AVATAR_DIR = path.join(__dirname, '..', 'public', 'avatars');
 const AVATAR_MAP_FILE = path.join(AVATAR_DIR, 'avatars.json');
 
-// --- Helpers para map de avatares (lectura/escritura sincronas - suficiente para operaciones puntuales) ---
+/* ---------- Helpers para avatar map ---------- */
 const readAvatarMap = () => {
   try {
     if (!fs.existsSync(AVATAR_MAP_FILE)) return {};
     const raw = fs.readFileSync(AVATAR_MAP_FILE, 'utf8');
     return JSON.parse(raw || '{}');
   } catch (err) {
-    console.warn('No se pudo leer avatars.json:', err.message || err);
+    console.warn('No se pudo leer avatars.json:', err && (err.message || err));
     return {};
   }
 };
@@ -28,11 +36,12 @@ const writeAvatarMap = (map) => {
     fs.writeFileSync(AVATAR_MAP_FILE, JSON.stringify(map, null, 2), 'utf8');
     return true;
   } catch (err) {
-    console.error('Error escribiendo avatars.json:', err);
+    console.error('Error escribiendo avatars.json:', err && (err.message || err));
     return false;
   }
 };
 
+/* Comprueba si la columna avatar existe en users */
 const checkAvatarColumn = async () => {
   try {
     const q = `
@@ -44,28 +53,22 @@ const checkAvatarColumn = async () => {
     const res = await db.query(q);
     return res.rows.length > 0;
   } catch (err) {
-    console.warn('No se pudo comprobar columna avatar:', err.message || err);
+    console.warn('No se pudo comprobar columna avatar:', err && (err.message || err));
     return false;
   }
 };
 
-/**
- * Construye la base URL del backend con protocolo y host (ej: http://localhost:5002)
- */
+/* Construye la base URL del backend (ej: http://localhost:5002) */
 const getBackendBaseUrl = (req) => {
   if (process.env.BACKEND_URL) return process.env.BACKEND_URL.replace(/\/$/, '');
   return `${req.protocol}://${req.get('host')}`;
 };
 
-/**
- * Multer middleware en memoria: producirá req.file.buffer
- * - Uso recomendado en la ruta: router.put('/profile', authenticateToken, uploadAvatarMiddleware, updateProfile)
- */
+/* ---------- Multer middleware (memoria) para avatar ---------- */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
   fileFilter: (req, file, cb) => {
-    // permitir solo imágenes comunes
     const allowed = ['image/jpeg', 'image/png', 'image/webp'];
     if (!allowed.includes(file.mimetype)) {
       return cb(new Error('Tipo de archivo no permitido. Solo jpg, png o webp.'));
@@ -75,30 +78,41 @@ const upload = multer({
 });
 const uploadAvatarMiddleware = upload.single('avatar');
 
-/**
- * GET /api/users/profile
- * Devuelve el perfil del usuario autenticado.
- */
+/* ---------- getProfile: devuelve perfil combinado (users + drivers si existe) ---------- */
 const getProfile = async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
-
     const userId = req.user.id;
+
+    // Determinar si existe columna avatar en users
     const hasAvatarColumn = await checkAvatarColumn();
-    const selectFields = hasAvatarColumn
-      ? 'id, name, email, phone, balance, avatar, role'
-      : 'id, name, email, phone, balance, role';
 
-    const q = `SELECT ${selectFields} FROM users WHERE id = $1`;
+    // Selección de campos del usuario (mantener compatibilidad con versiones previas)
+    const selectUser = hasAvatarColumn
+      ? 'u.id as user_id, u.name, u.email, u.phone, u.balance, u.avatar, u.role'
+      : 'u.id as user_id, u.name, u.email, u.phone, u.balance, u.role';
+
+    // Hacemos left join con drivers para incluir datos de conductor si existen
+    const q = `
+      SELECT ${selectUser},
+             d.id as driver_row_id, d.driver_code, d.license_number, d.vehicle_type, d.vehicle_plate,
+             d.is_available, d.current_location, d.rating, d.total_trips,
+             d.created_at as driver_created_at, d.updated_at as driver_updated_at
+      FROM users u
+      LEFT JOIN drivers d ON d.user_id = u.id
+      WHERE u.id = $1
+      LIMIT 1
+    `;
     const result = await db.query(q, [userId]);
-
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
 
     const row = result.rows[0];
 
-    // Si hay mapping en avatars.json, y el archivo existe, agregamos URL absoluta
+    // Normalizar avatar:
+    // 1) Si hay mapping en avatars.json para este user -> usarlo si el archivo existe
+    // 2) Si la columna avatar existe y es relativa (/...) -> convertir a URL absoluta
     const avatarMap = readAvatarMap();
     const mappedFile = avatarMap[String(userId)];
     if (mappedFile) {
@@ -107,21 +121,20 @@ const getProfile = async (req, res) => {
         const baseUrl = getBackendBaseUrl(req);
         row.avatar = `${baseUrl}/public/avatars/${mappedFile}`;
       } else {
-        // archivo no existe: limpiar mapping para evitar 404 repetidos
+        // limpiar mapping roto
         delete avatarMap[String(userId)];
         writeAvatarMap(avatarMap);
-        // si la columna avatar existe y apunta a algo inexistente, dejamos como null
-        if (row.avatar && typeof row.avatar === 'string' && row.avatar.startsWith('/')) {
-          row.avatar = null;
-        }
+        if (row.avatar && typeof row.avatar === 'string' && row.avatar.startsWith('/')) row.avatar = null;
       }
-    } else if (row.avatar) {
-      // si la columna avatar existe en BD y es relativa, normalizar a URL absoluta
-      if (typeof row.avatar === 'string' && row.avatar.startsWith('/')) {
+    } else if (row.avatar && typeof row.avatar === 'string') {
+      if (row.avatar.startsWith('/')) {
         const baseUrl = getBackendBaseUrl(req);
         row.avatar = `${baseUrl}${row.avatar}`;
+      } else if (!row.avatar.startsWith('http')) {
+        // si por alguna razón la DB guarda solo nombre de archivo
+        const baseUrl = getBackendBaseUrl(req);
+        row.avatar = `${baseUrl}/public/avatars/${row.avatar}`;
       }
-      // si ya es una URL absoluta la dejamos tal cual
     }
 
     return res.json(row);
@@ -131,26 +144,41 @@ const getProfile = async (req, res) => {
   }
 };
 
-/**
- * PUT /api/users/profile
- * Actualiza campos del perfil. Soporta upload de avatar (campo 'avatar' multipart/form-data).
- * Si la columna avatar existe en la BD, la actualiza con la ruta relativa (/public/avatars/filename)
- * Si la columna avatar no existe, guarda el archivo en public/avatars y lo mapea en avatars.json.
- */
+/* ---------- updateProfile: actualiza users y drivers (si corresponde) ---------- */
 const updateProfile = async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
       return res.status(401).json({ error: 'Usuario no autenticado' });
     }
-
     const userId = req.user.id;
-    // Campos permitidos a actualizar desde el body:
-    const { email, phone, vehicle, plate, license_number, name } = req.body;
 
-    // Validaciones básicas
+    // Soportar body y campos enviados por FormData (multer coloca fields en req.body)
+    const raw = req.body || {};
+
+    // Debug log (útil para ver lo que llega)
+    console.log('[userController.updateProfile] userId=%d rawBody=%o file=%s', userId, raw, !!req.file);
+
+    // Compatibilidad nombres: vehicle / vehicle_type / unit ; plate / vehicle_plate / placa ; license_number / license
+    // Normalizar: trim y convertir strings vacías a null
+    const normalize = (v) => {
+      if (v === undefined || v === null) return null;
+      if (typeof v !== 'string') return v;
+      const t = v.trim();
+      return t.length ? t : null;
+    };
+
+    const vehicle = normalize(raw.vehicle ?? raw.vehicle_type ?? raw.unit);
+    const plate = normalize(raw.plate ?? raw.vehicle_plate ?? raw.placa);
+    const license_number = normalize(raw.license_number ?? raw.license);
+    const email = normalize(raw.email ?? null);
+    const phone = normalize(raw.phone ?? null);
+    const name = normalize(raw.name ?? null);
+
+    console.log('[userController.updateProfile] resolved vehicle=%s plate=%s license=%s email=%s phone=%s name=%s', vehicle, plate, license_number, email, phone, name);
+
     const hasAvatarColumn = await checkAvatarColumn();
 
-    // Si actualizan email, verificar unicidad
+    // Validación: email único si se está actualizando
     if (email) {
       const emailQ = 'SELECT id FROM users WHERE email = $1 AND id <> $2 LIMIT 1';
       const emailRes = await db.query(emailQ, [email, userId]);
@@ -159,23 +187,13 @@ const updateProfile = async (req, res) => {
       }
     }
 
-    const fields = [];
-    const values = [];
-    let idx = 1;
-
-    if (name !== undefined) { fields.push(`name = $${idx++}`); values.push(name); }
-    if (email !== undefined) { fields.push(`email = $${idx++}`); values.push(email); }
-    if (phone !== undefined) { fields.push(`phone = $${idx++}`); values.push(phone); }
-    if (vehicle !== undefined) { fields.push(`vehicle = $${idx++}`); values.push(vehicle); }
-    if (plate !== undefined) { fields.push(`plate = $${idx++}`); values.push(plate); }
-    if (license_number !== undefined) { fields.push(`license_number = $${idx++}`); values.push(license_number); }
-
-    // Manejo de avatar si viene en req.file
+    // Manejo de avatar (si se subió archivo en req.file)
     let finalAvatarUrl = null;
+    let savedAvatarFileName = null;
     if (req.file && req.file.buffer) {
       try {
         if (!fs.existsSync(AVATAR_DIR)) fs.mkdirSync(AVATAR_DIR, { recursive: true });
-        // Sanitizar extensión
+
         const rawExt = (req.file.originalname && path.extname(req.file.originalname)) || '';
         const ext = rawExt ? rawExt.toLowerCase() : '.png';
         const safeExt = ['.png', '.jpg', '.jpeg', '.webp'].includes(ext) ? ext : '.png';
@@ -183,71 +201,138 @@ const updateProfile = async (req, res) => {
         const filePath = path.join(AVATAR_DIR, fileName);
         fs.writeFileSync(filePath, req.file.buffer);
 
-        const relativePathForDb = `/public/avatars/${fileName}`; // ruta relativa accesible (según server static)
+        const relativePathForDb = `/public/avatars/${fileName}`;
         finalAvatarUrl = `${getBackendBaseUrl(req)}${relativePathForDb}`;
 
-        // Actualizar mapping local avatars.json en cualquier caso (útil si no hay columna avatar)
+        // actualizar avatars.json mapping
         const avatarMap = readAvatarMap();
         avatarMap[String(userId)] = fileName;
         writeAvatarMap(avatarMap);
 
-        // Si la columna avatar existe en la BD, incluirla en los campos a actualizar (almacenamos la ruta relativa)
-        if (hasAvatarColumn) {
-          fields.push(`avatar = $${idx++}`);
-          values.push(relativePathForDb);
-        }
+        savedAvatarFileName = fileName;
       } catch (fsErr) {
-        console.error('Error guardando avatar:', fsErr);
+        console.error('Error guardando avatar:', fsErr && (fsErr.message || fsErr));
         return res.status(500).json({ error: 'No se pudo guardar el avatar' });
       }
     }
 
-    let resultRow = null;
-    if (fields.length > 0) {
-      // Añadir updated_at y cláusula WHERE
-      const returningFields = hasAvatarColumn
-        ? 'id, name, email, phone, balance, avatar, role'
-        : 'id, name, email, phone, balance, role';
+    // Iniciar transacción para actualizar users y drivers de forma atómica
+    await db.query('BEGIN');
 
-      const q = `UPDATE users SET ${fields.join(', ')}, updated_at = now() WHERE id = $${idx} RETURNING ${returningFields}`;
-      values.push(userId);
-      const result = await db.query(q, values);
-      resultRow = result.rows[0];
+    // Construir actualización de users (incluir avatar si columna existe)
+    const userFields = [];
+    const userValues = [];
+    let ui = 1;
 
-      // Si resultRow.avatar es relativo, transformarlo a URL absoluta
-      if (resultRow && resultRow.avatar && typeof resultRow.avatar === 'string') {
-        if (resultRow.avatar.startsWith('/')) {
-          const baseUrl = getBackendBaseUrl(req);
-          resultRow.avatar = `${baseUrl}${resultRow.avatar}`;
+    if (name !== null) { userFields.push(`name = $${ui++}`); userValues.push(name); }
+    if (email !== null) { userFields.push(`email = $${ui++}`); userValues.push(email); }
+    if (phone !== null) { userFields.push(`phone = $${ui++}`); userValues.push(phone); }
+
+    // Si hay avatar y columna avatar existe, guardamos relativa
+    if (savedAvatarFileName && hasAvatarColumn) {
+      const relativePathForDb = `/public/avatars/${savedAvatarFileName}`;
+      userFields.push(`avatar = $${ui++}`);
+      userValues.push(relativePathForDb);
+    }
+
+    if (userFields.length > 0) {
+      userValues.push(userId);
+      const qUpdateUser = `UPDATE users SET ${userFields.join(', ')}, updated_at = now() WHERE id = $${userValues.length} RETURNING id, name, email, phone, balance${hasAvatarColumn ? ', avatar' : ''}, role`;
+      const ures = await db.query(qUpdateUser, userValues);
+      console.log('[userController.updateProfile] users updated rowCount=%d', ures.rowCount);
+    } else {
+      console.log('[userController.updateProfile] no user fields to update');
+    }
+
+    // Actualizar/crear fila en drivers si vienen campos de driver (no actualizamos con nulls)
+    if (vehicle !== null || plate !== null || license_number !== null) {
+      const drvExist = await db.query('SELECT id FROM drivers WHERE user_id = $1 LIMIT 1', [userId]);
+      if (drvExist.rows.length > 0) {
+        const drvId = drvExist.rows[0].id;
+        const dFields = [];
+        const dParams = [];
+        let dj = 1;
+        if (vehicle !== null) { dFields.push(`vehicle_type = $${dj++}`); dParams.push(vehicle); }
+        if (plate !== null) { dFields.push(`vehicle_plate = $${dj++}`); dParams.push(plate); }
+        if (license_number !== null) { dFields.push(`license_number = $${dj++}`); dParams.push(license_number); }
+        if (dFields.length > 0) {
+          dParams.push(drvId);
+          const qUpdateDrv = `UPDATE drivers SET ${dFields.join(', ')}, updated_at = now() WHERE id = $${dParams.length}`;
+          const drvRes = await db.query(qUpdateDrv, dParams);
+          console.log('[userController.updateProfile] drivers updated rowCount=%d', drvRes.rowCount);
         } else {
-          // si es posible que sea sólo el file name en DB (no recomendado), convertir también:
-          if (!resultRow.avatar.startsWith('http')) {
-            const baseUrl = getBackendBaseUrl(req);
-            resultRow.avatar = `${baseUrl}/public/avatars/${resultRow.avatar}`;
-          }
+          console.log('[userController.updateProfile] no driver fields to update for existing driver row');
         }
+      } else {
+        // Insertar nueva fila drivers con lo que venga (solo columnas con valores)
+        const cols = ['user_id'];
+        const vals = ['$1'];
+        const params = [userId];
+        let dk = 2;
+        if (vehicle !== null) { cols.push('vehicle_type'); vals.push(`$${dk++}`); params.push(vehicle); }
+        if (plate !== null) { cols.push('vehicle_plate'); vals.push(`$${dk++}`); params.push(plate); }
+        if (license_number !== null) { cols.push('license_number'); vals.push(`$${dk++}`); params.push(license_number); }
+        const qInsertDrv = `INSERT INTO drivers (${cols.join(',')}, created_at, updated_at) VALUES (${vals.join(',')}, now(), now()) RETURNING id`;
+        const insertRes = await db.query(qInsertDrv, params);
+        console.log('[userController.updateProfile] drivers insert id=%o', insertRes.rows[0] && insertRes.rows[0].id);
+      }
+    } else {
+      console.log('[userController.updateProfile] no driver data in request (vehicle/plate/license_number all null)');
+    }
+
+    // Commit
+    await db.query('COMMIT');
+
+    // Preparar y devolver perfil actualizado (JOIN users + drivers)
+    const qProfile = `
+      SELECT u.id as user_id, u.name, u.email, u.phone, u.balance,
+             d.id as driver_row_id, d.driver_code, d.license_number, d.vehicle_type, d.vehicle_plate,
+             d.is_available, d.current_location, d.rating, d.total_trips,
+             u.role, u.avatar,
+             d.created_at as driver_created_at, d.updated_at as driver_updated_at
+      FROM users u
+      LEFT JOIN drivers d ON d.user_id = u.id
+      WHERE u.id = $1
+      LIMIT 1
+    `;
+    const pres = await db.query(qProfile, [userId]);
+    const profile = pres.rows[0] || null;
+
+    // Normalizar avatar en respuesta
+    if (profile) {
+      const avatarMap = readAvatarMap();
+      const mappedFile = avatarMap[String(userId)];
+      if (mappedFile) {
+        const candidatePath = path.join(AVATAR_DIR, mappedFile);
+        if (fs.existsSync(candidatePath)) {
+          profile.avatar = `${getBackendBaseUrl(req)}/public/avatars/${mappedFile}`;
+        } else {
+          // limpiar mapping roto
+          delete avatarMap[String(userId)];
+          writeAvatarMap(avatarMap);
+          if (profile.avatar && typeof profile.avatar === 'string' && profile.avatar.startsWith('/')) profile.avatar = null;
+        }
+      } else if (profile.avatar && typeof profile.avatar === 'string') {
+        if (profile.avatar.startsWith('/')) {
+          profile.avatar = `${getBackendBaseUrl(req)}${profile.avatar}`;
+        } else if (!profile.avatar.startsWith('http')) {
+          profile.avatar = `${getBackendBaseUrl(req)}/public/avatars/${profile.avatar}`;
+        }
+      } else if (!profile.avatar && finalAvatarUrl) {
+        // Si no existe columna avatar en DB pero subimos archivo -> devolver URL temporal
+        profile.avatar = finalAvatarUrl;
       }
     }
 
-    // Si no se actualizó ningún campo en BD, pero sí se subió avatar y no hay columna avatar,
-    // devolvemos avatarUrl para que frontend lo use desde avatars.json
-    const responsePayload = resultRow ? { ...resultRow } : {};
-    if (!responsePayload.avatar && finalAvatarUrl) {
-      // si DB no contiene avatar, añadimos avatarUrl para frontend
-      responsePayload.avatar = finalAvatarUrl;
-    }
-
-    if (!resultRow && !finalAvatarUrl) {
-      return res.status(400).json({ error: 'No hay campos para actualizar' });
-    }
-
-    return res.json(responsePayload);
+    return res.json(profile);
   } catch (err) {
+    try { await db.query('ROLLBACK'); } catch (rbErr) { /* ignore */ }
     console.error('Error updateProfile:', err && (err.stack || err.message || err));
     return res.status(500).json({ error: 'Error al actualizar perfil' });
   }
 };
 
+/* ---------- Exports ---------- */
 module.exports = {
   getProfile,
   updateProfile,

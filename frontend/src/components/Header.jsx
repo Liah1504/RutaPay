@@ -25,6 +25,7 @@ import ExitToAppIcon from '@mui/icons-material/ExitToApp';
 import CircularProgress from '@mui/material/CircularProgress';
 import Snackbar from '@mui/material/Snackbar';
 import Alert from '@mui/material/Alert';
+import HistoryIcon from '@mui/icons-material/History';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { notificationsAPI } from '../services/api';
@@ -208,13 +209,14 @@ const Header = () => {
     { key: 'users', text: 'Usuarios', icon: <PeopleIcon /> },
     { key: 'drivers', text: 'Conductores', icon: <GroupIcon /> },
     { key: 'reports', text: 'Reportes', icon: <AssessmentIcon /> },
-    { key: 'settings', text: 'Ajustes', icon: <SettingsIcon /> }
+    { key: 'settings', text: 'Ajustes', icon: <SettingsIcon /> },
+    { key: 'payments', text: 'Historial pagos', icon: <HistoryIcon /> }
   ];
 
   // allowed keys per role
   const allowedKeysByRole = {
-    admin: ['home', 'users', 'drivers', 'reports', 'settings'],
-    driver: ['home', 'settings'],
+    admin: ['home', 'users', 'drivers', 'reports', 'settings', 'payments'],
+    driver: ['home', 'settings', 'payments'],
     passenger: ['home', 'settings']
   };
 
@@ -232,6 +234,11 @@ const Header = () => {
     if (key === 'drivers') return '/admin/drivers';
     if (key === 'reports') return '/admin/reports';
     if (key === 'settings') return '/settings';
+    if (key === 'payments') {
+      if (role === 'admin') return '/admin/payments';
+      if (role === 'driver') return '/driver/payments';
+      return '/payments';
+    }
     return '/';
   };
 

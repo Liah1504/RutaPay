@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  Container, Paper, Typography, Box, Grid, CircularProgress, TableContainer, Table,
-  TableHead, TableRow, TableCell, TableBody, Avatar, Chip, TextField, Alert
+  Container, Paper, Typography, Box, Grid, CircularProgress, Avatar, Chip, Alert,
+  List, ListItem, ListItemText, Divider, Stack, IconButton
 } from '@mui/material';
-import { Groups, MonetizationOn, TrendingUp } from '@mui/icons-material';
+import { MonetizationOn, FileDownload } from '@mui/icons-material';
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Area
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
+import { useLocation } from 'react-router-dom';
 import Header from '../components/Header';
 import { driverAPI, adminAPI } from '../services/api';
 
-/* Fallback avatar inline */
+/* Inline fallback avatar */
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 24 24'>
      <rect width='100%' height='100%' fill='#eef3f5' rx='6'/>
@@ -22,70 +23,38 @@ const DEFAULT_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
   </svg>`
 )}`;
 
-const wrapLabel = (text = '', maxLen = 32) => {
-  const t = String(text || '');
-  if (t.length <= maxLen) return [t, null];
-  const before = t.slice(0, maxLen).trim();
-  const rest = t.slice(maxLen).trim();
-  const idx = rest.indexOf(' ');
-  if (idx > 0 && idx < 18) {
-    const add = rest.slice(0, idx);
-    const first = `${before} ${add}`.trim();
-    const second = rest.slice(idx + 1).trim();
-    return [first, second || null];
-  }
-  const second = rest.length > maxLen ? `${rest.slice(0, maxLen - 3)}...` : rest;
-  return [before, second || null];
-};
-
-const WrappedTick = ({ x, y, payload, maxLen = 32 }) => {
-  const value = payload?.value ?? '';
-  if (!value) return null;
-  const [first, second] = wrapLabel(value, maxLen);
-  return (
-    <g transform={`translate(${x},${y + 12})`}>
-      <text x={0} y={0} textAnchor="middle" fill="#666" style={{ fontSize: 13 }}>
-        <tspan x={0} dy="0">{first}</tspan>
-        {second ? <tspan x={0} dy="16" style={{ fontSize: 12 }}>{second}</tspan> : null}
-      </text>
-    </g>
-  );
-};
-
-const niceMax = (value) => {
-  if (!value || value <= 10) return 10;
-  const pow = Math.pow(10, Math.floor(Math.log10(value)));
-  const n = value / pow;
-  if (n <= 2) return 2 * pow;
-  if (n <= 5) return 5 * pow;
-  return 10 * pow;
-};
-
+/* Helpers */
 const formatCurrency = (v) => {
   const n = Number(v || 0);
   return `${n.toFixed(2)} BS`;
 };
 
+/* Palette for pie slices */
+const PIE_COLORS = ['#1976d2', '#ef5350', '#ffa726', '#66bb6a', '#ab47bc', '#29b6f6', '#8d6e63', '#ff7043'];
+
 export default function DriverDashboard() {
   const { user } = useAuth();
+  const location = useLocation();
 
   const [profile, setProfile] = useState(null);
   const [historyPayments, setHistoryPayments] = useState([]);
   const [graphData, setGraphData] = useState([]);
-  const [todaySummary, setTodaySummary] = useState({ passengers: 0, total: 0 });
+  const [summary, setSummary] = useState({ passengers: 0, total: 0 });
+
   const [loadingGraph, setLoadingGraph] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
-  const [loadingTodaySummary, setLoadingTodaySummary] = useState(true);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+
   const [filterName, setFilterName] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
 
-  const [chartKey, setChartKey] = useState(0);
-  const mountedRef = useRef(true);
+  // pagination state (for the separate payments page)
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
+  const mountedRef = useRef(false);
+
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   const getLocalISODate = (d = new Date()) => {
     const yyyy = d.getFullYear();
@@ -94,19 +63,19 @@ export default function DriverDashboard() {
     return `${yyyy}-${mm}-${dd}`;
   };
 
+  // load once on mount or when user.id changes
   useEffect(() => {
-    let interval;
-    const fetchAll = async () => {
+    const loadOnce = async () => {
       if (!mountedRef.current) return;
       setLoadingGraph(true);
       setLoadingPayments(true);
-      setLoadingTodaySummary(true);
+      setLoadingSummary(true);
       setErrorMsg(null);
 
       try {
         const date = getLocalISODate();
 
-        // profile + payments (driver-scoped)
+        // profile + payments
         const [profileRes, paymentsRes] = await Promise.all([
           driverAPI.getProfile().catch(err => ({ error: err })),
           driverAPI.getPayments().catch(err => ({ error: err, data: [] }))
@@ -121,17 +90,16 @@ export default function DriverDashboard() {
         setHistoryPayments(pagos);
         setLoadingPayments(false);
 
-        // summary: try driver endpoint first, fallback to admin only on 404
-        let summaryRes = null;
+        // summary (driver endpoint preferred, fallback admin on 404)
+        let summaryRes;
         try {
-          summaryRes = await driverAPI.getPaymentsSummary({ date });
+          summaryRes = await driverAPI.getPaymentsSummary({ date, period: 'day' });
         } catch (err) {
           const status = err?.response?.status;
           if (status === 404) {
-            // compatibility fallback
-            summaryRes = await adminAPI.getDriverPaymentsSummary({ date }).catch(e => { throw e; });
+            summaryRes = await adminAPI.getDriverPaymentsSummary({ date, period: 'day' }).catch(e => { throw e; });
           } else {
-            throw err; // propagate 401/403/other
+            throw err;
           }
         }
 
@@ -141,11 +109,11 @@ export default function DriverDashboard() {
         const summaryBody = (rawSummary && typeof rawSummary === 'object' && rawSummary.data) ? rawSummary.data : rawSummary;
 
         const passengers_count = Number(summaryBody.passengers_count ?? summaryBody.passengers ?? summaryBody.passenger_count ?? 0) || 0;
-        const total_today = parseFloat(summaryBody.total ?? summaryBody.total_amount ?? summaryBody.amount ?? 0) || 0;
-        setTodaySummary({ passengers: passengers_count, total: total_today });
-        setLoadingTodaySummary(false);
+        const total_amount = parseFloat(summaryBody.total ?? summaryBody.total_amount ?? summaryBody.amount ?? 0) || 0;
+        setSummary({ passengers: passengers_count, total: total_amount });
+        setLoadingSummary(false);
 
-        // totals array for chart - support multiple shapes
+        // Normalize and aggregate totals by route_name
         let rawTotals = [];
         if (Array.isArray(summaryBody.totals)) rawTotals = summaryBody.totals;
         else if (Array.isArray(rawSummary?.totals)) rawTotals = rawSummary.totals;
@@ -153,28 +121,25 @@ export default function DriverDashboard() {
         else if (Array.isArray(summaryRes?.data)) rawTotals = summaryRes.data;
         else rawTotals = [];
 
-        const normalized = rawTotals.map(item => ({
-          route_name: item.route_name || item.name || (item.route && item.route.name) || `Ruta ${item.route_id ?? item.id ?? ''}`,
-          total: Number(item.total ?? item.amount ?? item.value) || 0,
-        }));
+        const map = new Map();
+        rawTotals.forEach(item => {
+          const name = item.route_name || item.name || (item.route && item.route.name) || `Ruta ${item.route_id ?? item.id ?? ''}`;
+          const val = Number(item.total ?? item.amount ?? item.value) || 0;
+          map.set(name, (map.get(name) || 0) + val);
+        });
 
-        const visuallyOrdered = [...normalized].sort((a, b) => b.total - a.total);
+        const aggregated = Array.from(map.entries()).map(([route_name, total]) => ({ route_name, total }));
+        const visuallyOrdered = aggregated.sort((a, b) => b.total - a.total);
 
         setGraphData(visuallyOrdered);
-        setChartKey(k => k + 1);
         setLoadingGraph(false);
-
-        setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch {} }, 80);
       } catch (err) {
-        console.error('DriverDashboard fetch error:', err);
+        console.error('DriverDashboard load error:', err);
         const status = err?.response?.status;
-        if (status === 401 || status === 403) {
-          setErrorMsg('No autorizado para ver resúmenes. Revisa tu sesión/permisos.');
-        } else {
-          setErrorMsg('No se pudieron cargar los datos del dashboard. Se muestra historial si está disponible.');
-        }
+        if (status === 401 || status === 403) setErrorMsg('No autorizado para ver resúmenes. Revisa tu sesión/permisos.');
+        else setErrorMsg('No se pudieron cargar los datos del dashboard.');
 
-        // best-effort: try to ensure payments history is available
+        // best-effort payments
         try {
           const paymentsOnly = await driverAPI.getPayments().catch(() => ({ data: [] }));
           if (mountedRef.current) setHistoryPayments(Array.isArray(paymentsOnly?.data) ? paymentsOnly.data : []);
@@ -183,29 +148,75 @@ export default function DriverDashboard() {
         }
 
         setGraphData([]);
-        setTodaySummary({ passengers: 0, total: 0 });
+        setSummary({ passengers: 0, total: 0 });
         setLoadingGraph(false);
         setLoadingPayments(false);
-        setLoadingTodaySummary(false);
+        setLoadingSummary(false);
       }
     };
 
-    fetchAll();
-    interval = setInterval(fetchAll, 10000);
-    return () => { clearInterval(interval); };
+    loadOnce();
   }, [user?.id]);
 
+  // filtered payments for export/table
   const filteredPayments = filterName.trim()
-    ? historyPayments.filter(p => p.passenger_name && p.passenger_name.toLowerCase().includes(filterName.trim().toLowerCase()))
+    ? historyPayments.filter(p => (p.passenger_name || p.user_name || '').toLowerCase().includes(filterName.trim().toLowerCase()))
     : historyPayments;
+  const paymentsPage = filteredPayments.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
-  const yMax = graphData.length ? Math.max(...graphData.map(d => Number(d.total || 0))) : 0;
-  const domainMax = niceMax(yMax);
+  // pie data: top N + Otros
+  const preparePieData = (data, topN = 6) => {
+    if (!Array.isArray(data) || data.length === 0) return [];
+    const top = data.slice(0, topN);
+    const rest = data.slice(topN);
+    const othersSum = rest.reduce((s, r) => s + Number(r.total || 0), 0);
+    const pie = top.map(d => ({ name: d.route_name, value: Number(d.total || 0) }));
+    if (othersSum > 0) pie.push({ name: 'Otros', value: othersSum });
+    return pie;
+  };
+  const pieData = preparePieData(graphData, 6);
+  const totalForPie = pieData.reduce((s, r) => s + (Number(r.value) || 0), 0);
+
+  // export CSV
+  const exportCSV = async () => {
+    try {
+      const res = await driverAPI.getPayments();
+      const rows = Array.isArray(res?.data) ? res.data : [];
+      const headers = ['Ruta', 'Pasajero', 'Monto (Bs)', 'Fecha'];
+      const csvRows = [headers.join(',')];
+      rows.forEach(r => {
+        const ruta = `"${(r?.route_name || r?.route?.name || '').replace(/"/g, '""')}"`;
+        const pas = `"${(r?.passenger_name || r?.user_name || '').replace(/"/g, '""')}"`;
+        const monto = parseFloat(r?.amount ?? r?.monto ?? 0).toFixed(2);
+        const fecha = `"${(r?.created_at ? new Date(r.created_at).toLocaleString() : '')}"`;
+        csvRows.push([ruta, pas, monto, fecha].join(','));
+      });
+      const csv = csvRows.join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeUser = (user?.name || 'conductor').replace(/\s+/g, '_').toLowerCase();
+      // use fixed suffix to avoid undefined variable
+      a.download = `pagos_${safeUser}_day.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err) {
+      console.error('Error exportando CSV', err);
+    }
+  };
 
   const resolvedAvatar = (user?.avatar && String(user.avatar).trim()) ||
-                         (profile?.avatar && String(profile.avatar).trim()) ||
-                         DEFAULT_AVATAR;
+    (profile?.avatar && String(profile.avatar).trim()) ||
+    DEFAULT_AVATAR;
 
+  const topRoutes = graphData.slice(0, 5);
+  const periodLabel = 'Hoy';
+  const hideBottomHistory = location?.pathname === '/driver';
+
+  // Render: no slice labels around chart (legend only)
   return (
     <>
       <Header />
@@ -217,128 +228,168 @@ export default function DriverDashboard() {
           <Box>
             <Typography variant="h6" fontWeight={700}>Bienvenido, {profile?.name || user?.name || 'Conductor'}</Typography>
             <Box sx={{ mt: 1 }}>
-              <Typography variant="body2">Estado: <Chip label={profile?.is_available ? 'En ruta' : 'Fuera de servicio'} color={profile?.is_available ? 'success' : 'default'} size="small" /></Typography>
+              <Typography variant="body2">
+                Estado:&nbsp;
+                <Chip label={profile?.is_available ? 'En ruta' : 'Fuera de servicio'} color={profile?.is_available ? 'success' : 'default'} size="small" />
+              </Typography>
             </Box>
           </Box>
 
           <Avatar
             src={resolvedAvatar}
             alt={profile?.name || user?.name || 'Conductor'}
-            imgProps={{
-              onError: (e) => { try { if (e && e.currentTarget) { e.currentTarget.onerror = null; e.currentTarget.src = DEFAULT_AVATAR; } } catch {} },
-              crossOrigin: 'anonymous',
-              style: { objectFit: 'cover' }
-            }}
+            imgProps={{ onError: (e) => { try { if (e && e.currentTarget) e.currentTarget.src = DEFAULT_AVATAR; } catch {} } }}
             sx={{ width: 64, height: 64, border: '2px solid #fff' }}
           />
         </Paper>
 
-        {/* Chart */}
-        <Box sx={{ height: 420, minHeight: 320, background: 'white', borderRadius: 2, p: 2, mb: 3, overflow: 'visible' }}>
-          {loadingGraph ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-              <CircularProgress />
-            </Box>
-          ) : (
-            <ResponsiveContainer key={chartKey} width="100%" height="100%">
-              <LineChart data={graphData} margin={{ top: 8, right: 18, left: 36, bottom: 64 }}>
-                <defs>
-                  <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#fa4e48" stopOpacity={0.12}/>
-                    <stop offset="100%" stopColor="#fa4e48" stopOpacity={0.02}/>
-                  </linearGradient>
-                </defs>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={8}>
+            <Paper sx={{ p: 2, mb: 3, borderRadius: 2, bgcolor: '#f5f6f7' }}>
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="h6">Distribución por Ruta</Typography>
+              </Box>
 
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="route_name"
-                  interval={0}
-                  height={92}
-                  tick={<WrappedTick maxLen={36} />}
-                  tickLine={false}
-                  axisLine={{ stroke: '#e0e0e0' }}
-                  padding={{ left: 16, right: 16 }}
-                />
-                <YAxis allowDecimals={false} domain={[0, domainMax]} width={56} tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(value, name, props) => [`Bs ${Number(value).toFixed(2)}`, props && props.payload ? props.payload.route_name : 'Recaudado']} />
-                <Area type="monotone" dataKey="total" stroke="none" fill="url(#areaGrad)" />
-                <Line type="monotone" dataKey="total" stroke="#fa4e48" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} isAnimationActive={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 320 }}>
+                <Box sx={{ flex: 1, minWidth: 320, height: 320 }}>
+                  {loadingGraph ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
+                      <CircularProgress />
+                    </Box>
+                  ) : (
+                    pieData.length === 0 ? (
+                      <Typography color="text.secondary">No hay datos para mostrar</Typography>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            dataKey="value"
+                            nameKey="name"
+                            innerRadius={70}
+                            outerRadius={120}
+                            paddingAngle={4}
+                            // labels removed to keep chart clean (legend shows names)
+                            label={null}
+                            labelLine={false}
+                            isAnimationActive={false}
+                          >
+                            {pieData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                            ))}
+                          </Pie>
 
-        {/* cards */}
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={4}>
-            <Paper elevation={1} sx={{ py: 2, px: 4, display: 'flex', gap: 2, alignItems: 'center' }}>
-              <Groups sx={{ color: 'error.main', fontSize: 32 }} />
-              <Box>
-                <Typography variant="body1" fontWeight={500}>
-                  {loadingTodaySummary ? <CircularProgress size={20} /> : todaySummary.passengers}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">Pasajeros hoy</Typography>
+                          <Tooltip formatter={(value, name) => [`Bs ${Number(value).toFixed(2)}`, name]} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )
+                  )}
+                </Box>
+
+                <Box sx={{ width: 240, p: 1 }}>
+                  <Paper sx={{ bgcolor: '#fff', p: 1.25, borderRadius: 1, boxShadow: 0 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1, fontSize: 13 }}>Leyenda</Typography>
+                    <List dense sx={{ p: 0 }}>
+                      {pieData.map((d, i) => {
+                        const percent = totalForPie ? (Number(d.value) / totalForPie) * 100 : 0;
+                        return (
+                          <ListItem key={d.name} sx={{ py: 0.6, alignItems: 'flex-start' }}>
+                            <Box sx={{ width: 10, height: 10, bgcolor: PIE_COLORS[i % PIE_COLORS.length], borderRadius: 1, mr: 1, mt: 0.8 }} />
+                            <Box sx={{ flex: 1 }}>
+                              <Typography variant="body2" sx={{ fontSize: 11, lineHeight: '1.05' }}>{d.name}</Typography>
+                              <Typography variant="caption" sx={{ display: 'block', fontSize: 10, color: 'text.secondary', mt: 0.3 }}>{`${formatCurrency(d.value)} • ${percent.toFixed(0)}%`}</Typography>
+                            </Box>
+                          </ListItem>
+                        );
+                      })}
+                    </List>
+                  </Paper>
+                </Box>
               </Box>
             </Paper>
+
+            {!hideBottomHistory && (
+              <Paper elevation={1} sx={{ p: 3 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6" fontWeight={700} color="primary">Historial de Pagos Recibidos</Typography>
+                  <Box>
+                    <Box component="span" sx={{ mr: 1 }}>
+                      <input
+                        placeholder="Filtrar por pasajero"
+                        value={filterName}
+                        onChange={(e) => { setFilterName(e.target.value); setPage(0); }}
+                        style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #d0d7da' }}
+                      />
+                    </Box>
+                    <IconButton size="small" onClick={() => exportCSV(true)} title="Exportar CSV"><FileDownload /></IconButton>
+                  </Box>
+                </Box>
+
+                <Box>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
+                        <th style={{ padding: '10px 8px' }}>Ruta</th>
+                        <th style={{ padding: '10px 8px' }}>Pasajero</th>
+                        <th style={{ padding: '10px 8px' }}>Monto (Bs)</th>
+                        <th style={{ padding: '10px 8px' }}>Fecha</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paymentsPage.map(p => (
+                        <tr key={p?.id ?? `${p?.passenger_name}-${p?.created_at ?? Math.random()}`} style={{ borderBottom: '1px solid #f4f6f7' }}>
+                          <td style={{ padding: '10px 8px' }}>{p?.route_name || p?.route?.name || '-'}</td>
+                          <td style={{ padding: '10px 8px' }}>{p?.passenger_name || p?.user_name || '-'}</td>
+                          <td style={{ padding: '10px 8px' }}>{(parseFloat(p?.amount ?? p?.monto ?? 0) || 0).toFixed(2)} Bs</td>
+                          <td style={{ padding: '10px 8px' }}>{p?.created_at ? new Date(p.created_at).toLocaleString() : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </Box>
+              </Paper>
+            )}
           </Grid>
 
           <Grid item xs={12} md={4}>
-            <Paper elevation={1} sx={{ py: 2, px: 4, display: 'flex', gap: 2, alignItems: 'center' }}>
-              <MonetizationOn sx={{ color: 'error.main', fontSize: 32 }} />
-              <Box>
-                <Typography variant="body1" fontWeight={500}>
-                  {loadingTodaySummary ? <CircularProgress size={20} /> : formatCurrency(todaySummary.total)}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">Recaudado</Typography>
-              </Box>
-            </Paper>
-          </Grid>
+            <Stack spacing={2}>
+              <Paper elevation={1} sx={{ p: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="subtitle2" color="text.secondary">Total recaudado</Typography>
+                  <IconButton size="small" onClick={() => exportCSV(true)} title="Exportar historial CSV"><FileDownload /></IconButton>
+                </Box>
 
-          <Grid item xs={12} md={4}>
-            <Paper elevation={1} sx={{ py: 2, px: 4, display: 'flex', gap: 2, alignItems: 'center' }}>
-              <TrendingUp sx={{ color: 'error.main', fontSize: 32 }} />
-              <Box>
-                <Typography variant="body1" fontWeight={500}>
-                  {loadingTodaySummary ? <CircularProgress size={20} /> : formatCurrency(todaySummary.total)}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">Ganancias (Hoy)</Typography>
-              </Box>
-            </Paper>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
+                  <Avatar sx={{ bgcolor: 'transparent' }}><MonetizationOn color="error" /></Avatar>
+                  <Box>
+                    <Typography variant="h5">{loadingSummary ? <CircularProgress size={18} /> : formatCurrency(summary.total)}</Typography>
+                    <Typography variant="body2" color="text.secondary">{periodLabel}</Typography>
+                    <Typography variant="caption" color="text.secondary">{totalForPie ? `Total mostrado: ${formatCurrency(totalForPie)}` : ''}</Typography>
+                  </Box>
+                </Box>
+
+                <Divider sx={{ my: 2 }} />
+
+                <Typography variant="subtitle2">Pasajeros</Typography>
+                <Typography variant="h6" sx={{ mt: 0.5 }}>{loadingSummary ? <CircularProgress size={18} /> : summary.passengers}</Typography>
+              </Paper>
+
+              <Paper elevation={1} sx={{ p: 2 }}>
+                <Typography variant="subtitle2" color="text.secondary">Top rutas</Typography>
+                <List dense>
+                  {topRoutes.length === 0 && <ListItem><ListItemText primary="No hay datos" /></ListItem>}
+                  {topRoutes.map((r, idx) => (
+                    <ListItem key={`${r.route_name}-${idx}`} secondaryAction={<Typography variant="body2" color="text.secondary">{formatCurrency(r.total)}</Typography>}>
+                      <ListItemText primary={r.route_name} />
+                    </ListItem>
+                  ))}
+                </List>
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="caption" color="text.secondary">Valores según periodo por defecto.</Typography>
+              </Paper>
+            </Stack>
           </Grid>
         </Grid>
-
-        <Paper elevation={1} sx={{ p: 3 }}>
-          <Typography variant="h6" fontWeight={700} color="primary" sx={{ mb: 2 }}>Historial de Pagos Recibidos</Typography>
-          <TextField label="Filtrar por pasajero" variant="outlined" value={filterName} onChange={e => setFilterName(e.target.value)} sx={{ mb: 2, maxWidth: 360 }} />
-          {loadingPayments ? <CircularProgress /> : (
-            <TableContainer>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Ruta</TableCell>
-                    <TableCell>Pasajero</TableCell>
-                    <TableCell>Monto (Bs)</TableCell>
-                    <TableCell>Fecha</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {filteredPayments.map(p => {
-                    // row key: prefer id, otherwise build a stable-ish key avoiding inline template mistakes
-                    const rowKey = p?.id ?? `${(p?.passenger_name || p?.user_name || 'pass')}-${p?.created_at ?? Math.random()}`;
-                    return (
-                      <TableRow key={rowKey}>
-                        <TableCell>{p?.route_name || p?.route?.name || '-'}</TableCell>
-                        <TableCell>{p?.passenger_name || p?.user_name || '-'}</TableCell>
-                        <TableCell>{parseFloat(p?.amount ?? p?.monto ?? 0).toFixed(2)} Bs</TableCell>
-                        <TableCell>{p?.created_at ? new Date(p.created_at).toLocaleString() : ''}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </Paper>
       </Container>
     </>
   );
