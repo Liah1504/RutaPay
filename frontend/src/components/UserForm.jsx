@@ -1,100 +1,194 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Box, TextField, Button, MenuItem, Select, InputLabel, FormControl, Grid, CircularProgress
+  Grid,
+  TextField,
+  Button,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Select,
+  Box,
+  Typography
 } from '@mui/material';
 
-// Props: isSubmitting, onCancel, onSubmit, initialData = {}, requirePassword = true
-const UserForm = ({ isSubmitting, onCancel, onSubmit, initialData = {}, requirePassword = true }) => {
-  // Normalizar initialData por si viene null/undefined
-  const data = initialData || {};
-
-  const [name, setName] = useState(data.name || '');
-  const [email, setEmail] = useState(data.email || '');
+/**
+ * UserForm
+ * Props:
+ *  - initialData: optional object with fields to prefill (used in edit)
+ *  - onSubmit(formData): function called with form payload when user submits
+ *  - onCancel(): cancel handler
+ *  - isSubmitting: boolean
+ *  - requirePassword: boolean (if true, password is required)
+ *
+ * Behavior:
+ *  - Shows driver-specific fields (balance, vehicle_type, vehicle_plate, license_number)
+ *    only when role corresponds to a driver (role values: 'driver', 'conductor', 'chofer').
+ *  - When role switches away from driver, driver-specific fields are cleared.
+ *  - On submit, driver-only fields are omitted from payload unless role is driver.
+ */
+const UserForm = ({ initialData = {}, onSubmit, onCancel, isSubmitting = false, requirePassword = false }) => {
+  // Basic user fields
+  const [name, setName] = useState(initialData.name ?? '');
+  const [email, setEmail] = useState(initialData.email ?? '');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState(data.role || 'driver'); // por defecto driver
-  const [balance, setBalance] = useState(data.balance != null ? String(data.balance) : '0.00');
+  const [role, setRole] = useState(initialData.role ?? 'driver'); // default driver if creating
 
-  // Campos específicos de conductor (opcionales)
-  const [vehicle_plate, setVehiclePlate] = useState(data.vehicle_plate || '');
-  const [license_number, setLicenseNumber] = useState(data.license_number || '');
-  const [vehicle_type, setVehicleType] = useState(data.vehicle_type || '');
+  // Driver-specific
+  const [balance, setBalance] = useState(initialData.balance ?? 0);
+  const [vehicleType, setVehicleType] = useState(initialData.vehicle_type ?? initialData.vehicleType ?? '');
+  const [vehiclePlate, setVehiclePlate] = useState(initialData.vehicle_plate ?? initialData.vehiclePlate ?? '');
+  const [licenseNumber, setLicenseNumber] = useState(initialData.license_number ?? initialData.licenseNumber ?? '');
 
-  // Inicializar solo cuando cambie realmente el user (por ejemplo id o email)
+  const [error, setError] = useState('');
+
   useEffect(() => {
-    const d = initialData || {};
-    setName(d.name || '');
-    setEmail(d.email || '');
+    // If initialData.role changes (editing different user), update role locally
+    setRole(initialData.role ?? 'driver');
+    setName(initialData.name ?? '');
+    setEmail(initialData.email ?? '');
+    setBalance(initialData.balance ?? 0);
+    setVehicleType(initialData.vehicle_type ?? initialData.vehicleType ?? '');
+    setVehiclePlate(initialData.vehicle_plate ?? initialData.vehiclePlate ?? '');
+    setLicenseNumber(initialData.license_number ?? initialData.licenseNumber ?? '');
     setPassword('');
-    setRole(d.role || 'driver');
-    setBalance(d.balance != null ? String(d.balance) : '0.00');
-    setVehiclePlate(d.vehicle_plate || '');
-    setLicenseNumber(d.license_number || '');
-    setVehicleType(d.vehicle_type || '');
+    setError('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialData?.id, initialData?.email]); // dependencias estables: evita reinicios por referencia de objeto
+  }, [initialData?.id]);
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    // Validaciones básicas
-    if (!name || !email || (requirePassword && !password)) {
+  const isDriverRole = (r) => {
+    if (!r) return false;
+    const v = String(r).toLowerCase();
+    return v === 'driver' || v === 'conductor' || v === 'chofer';
+  };
+
+  const handleRoleChange = (ev) => {
+    const newRole = ev.target.value;
+    setRole(newRole);
+    // If switching away from driver, clear driver-only fields
+    if (!isDriverRole(newRole)) {
+      setBalance(0);
+      setVehicleType('');
+      setVehiclePlate('');
+      setLicenseNumber('');
+    }
+  };
+
+  const handleSubmit = async (ev) => {
+    ev.preventDefault();
+    setError('');
+
+    if (!name || !email || (requirePassword && !password && !initialData?.id)) {
+      setError('Nombre, correo y contraseña (si se requiere) son obligatorios.');
       return;
     }
+
+    // Build payload
     const payload = {
-      name: name.trim(),
-      email: email.trim(),
-      ...(password ? { password } : {}),
-      role,
-      balance: balance ? parseFloat(balance) : 0,
-      vehicle_plate: vehicle_plate ? vehicle_plate.trim() : undefined,
-      license_number: license_number ? license_number.trim() : undefined,
-      vehicle_type: vehicle_type ? vehicle_type.trim() : undefined
+      name,
+      email,
+      role
     };
-    onSubmit(payload);
+
+    // Only include password if provided (for edits)
+    if (password) payload.password = password;
+
+    // Include driver-specific fields only when role is driver
+    if (isDriverRole(role)) {
+      // balance might be number or string -> make number
+      payload.balance = Number(balance || 0);
+      if (vehicleType) payload.vehicle_type = vehicleType;
+      if (vehiclePlate) payload.vehicle_plate = vehiclePlate;
+      if (licenseNumber) payload.license_number = licenseNumber;
+    }
+
+    try {
+      await onSubmit(payload);
+    } catch (err) {
+      // onSubmit should throw or set errors; show a fallback message
+      console.error('UserForm submit error:', err);
+      setError(err?.response?.data?.error || err?.message || 'Error al crear/actualizar usuario');
+    }
   };
 
   return (
-    <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
+    <Box component="form" onSubmit={handleSubmit} noValidate>
       <Grid container spacing={2}>
         <Grid item xs={12}>
-          <TextField label="Nombre" value={name} onChange={(e) => setName(e.target.value)} fullWidth required />
+          <TextField label="Nombre *" value={name} onChange={(e) => setName(e.target.value)} fullWidth />
         </Grid>
+
         <Grid item xs={12}>
-          <TextField label="Correo Electrónico" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth required />
+          <TextField label="Correo Electrónico *" type="email" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth />
         </Grid>
-        {requirePassword && (
-          <Grid item xs={12}>
-            <TextField label="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} fullWidth required />
-          </Grid>
-        )}
-        <Grid item xs={12} sm={6}>
+
+        <Grid item xs={12}>
+          <TextField
+            label={initialData?.id ? 'Contraseña (dejar vacío para no cambiar)' : 'Contraseña *'}
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            fullWidth
+            required={requirePassword && !initialData?.id}
+          />
+        </Grid>
+
+        <Grid item xs={6}>
           <FormControl fullWidth>
-            <InputLabel>Rol</InputLabel>
-            <Select value={role} label="Rol" onChange={(e) => setRole(e.target.value)}>
+            <InputLabel id="user-role-select">Rol</InputLabel>
+            <Select
+              labelId="user-role-select"
+              value={role}
+              label="Rol"
+              onChange={handleRoleChange}
+            >
               <MenuItem value="driver">Conductor</MenuItem>
               <MenuItem value="admin">Administrador</MenuItem>
+              {/* keep other roles if you have them */}
             </Select>
           </FormControl>
         </Grid>
 
-        <Grid item xs={12} sm={6}>
-          <TextField label="Balance (Bs)" value={balance} onChange={(e) => setBalance(e.target.value)} fullWidth />
-        </Grid>
+        {/* Balance often shown regardless in your modal; hide it when not driver */}
+        {isDriverRole(role) ? (
+          <Grid item xs={6}>
+            <TextField
+              label="Balance (Bs)"
+              type="number"
+              value={balance}
+              onChange={(e) => setBalance(e.target.value)}
+              fullWidth
+            />
+          </Grid>
+        ) : (
+          // keep grid spacing consistent when balance hidden
+          <Grid item xs={6} />
+        )}
 
-        {/* Campos de conductor */}
-        <Grid item xs={12} sm={4}>
-          <TextField label="Placa (opcional)" value={vehicle_plate} onChange={(e) => setVehiclePlate(e.target.value)} fullWidth />
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <TextField label="Tipo de vehículo (opcional)" value={vehicle_type} onChange={(e) => setVehicleType(e.target.value)} fullWidth />
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          <TextField label="Número de licencia (opcional)" value={license_number} onChange={(e) => setLicenseNumber(e.target.value)} fullWidth />
-        </Grid>
+        {/* Driver-only fields */}
+        {isDriverRole(role) && (
+          <>
+            <Grid item xs={4}>
+              <TextField label="Placa (opcional)" value={vehiclePlate} onChange={(e) => setVehiclePlate(e.target.value)} fullWidth />
+            </Grid>
+            <Grid item xs={4}>
+              <TextField label="Tipo de vehículo (opcional)" value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} fullWidth />
+            </Grid>
+            <Grid item xs={4}>
+              <TextField label="Número de licencia (opcional)" value={licenseNumber} onChange={(e) => setLicenseNumber(e.target.value)} fullWidth />
+            </Grid>
+          </>
+        )}
+
+        {error && (
+          <Grid item xs={12}>
+            <Typography color="error">{error}</Typography>
+          </Grid>
+        )}
 
         <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
           <Button onClick={onCancel} disabled={isSubmitting}>Cancelar</Button>
           <Button type="submit" variant="contained" disabled={isSubmitting}>
-            {isSubmitting ? <CircularProgress size={20} color="inherit" /> : (data && data.id ? 'Guardar' : (role === 'admin' ? 'Crear Administrador' : 'Crear Conductor'))}
+            {isSubmitting ? 'Guardando...' : (initialData?.id ? 'Actualizar' : (isDriverRole(role) ? 'Crear Conductor' : 'Crear Administrador'))}
           </Button>
         </Grid>
       </Grid>

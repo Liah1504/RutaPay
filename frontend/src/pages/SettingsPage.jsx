@@ -1,9 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Container, Paper, Typography, TextField, Button, Box, Avatar } from '@mui/material';
+import {
+  Container, Paper, Typography, TextField, Button, Box, Avatar, Grid, Stack
+} from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
+/**
+ * SettingsPage
+ * - Permite cambiar foto y editar email/phone.
+ * - El botón "Eliminar" junto a la foto ha sido eliminado (ya no aparece).
+ * - Campos de vehículo (vehicle/plate/license) se muestran SOLO si el usuario es conductor.
+ * - No se guarda la URL blob en localStorage; se revoca al desmontar.
+ */
 export default function SettingsPage() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
@@ -38,10 +47,10 @@ export default function SettingsPage() {
   }, [user]);
 
   useEffect(() => {
-    // liberar objectURL si creamos uno
+    // liberar objectURL si creamos uno al desmontar o al cambiar preview
     return () => {
       if (avatarPreview && typeof avatarPreview === 'string' && avatarPreview.startsWith('blob:')) {
-        URL.revokeObjectURL(avatarPreview);
+        try { URL.revokeObjectURL(avatarPreview); } catch (e) { /* ignore */ }
       }
     };
   }, [avatarPreview]);
@@ -98,10 +107,6 @@ export default function SettingsPage() {
         // backend debe devolver el usuario actualizado con 'avatar' = URL pública
         if (res?.data) {
           setUser && setUser(res.data);
-          // opcional: guardar avatar pública en localStorage si quieres persistencia
-          try {
-            if (res.data.avatar) localStorage.setItem('rutapay_avatar', res.data.avatar);
-          } catch (err) { /* ignore */ }
         }
       } else {
         // 2) Sin avatar -> envío normal JSON
@@ -148,7 +153,9 @@ export default function SettingsPage() {
         <Typography variant="h5" sx={{ mb: 3 }}>Ajustes de perfil</Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
-          <Avatar src={avatarPreview || undefined} sx={{ width: 72, height: 72 }}>{(user?.name || '').charAt(0)}</Avatar>
+          <Avatar src={avatarPreview || undefined} sx={{ width: 72, height: 72 }}>
+            {(user?.name || '').charAt(0)}
+          </Avatar>
           <Box>
             <input
               type="file"
@@ -157,11 +164,13 @@ export default function SettingsPage() {
               style={{ display: 'none' }}
               onChange={handleFileInput}
             />
-            <Button variant="contained" onClick={handleClickChangePhoto} disabled={loading}>Cambiar foto</Button>
-            <Button sx={{ ml: 1 }} variant="outlined" onClick={() => {
-              setAvatarFile(null);
-              setAvatarPreview(user?.avatar || null);
-            }} disabled={loading}>Eliminar</Button>
+            <Stack direction="row" spacing={1}>
+              <Button variant="contained" onClick={handleClickChangePhoto} disabled={loading}>
+                {loading ? 'Procesando...' : 'Cambiar foto'}
+              </Button>
+
+              {/* El botón "Eliminar" ha sido eliminado por completo según lo solicitado. */}
+            </Stack>
             <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
               JPG/PNG, máximo recomendado 2MB.
             </Typography>
@@ -169,40 +178,71 @@ export default function SettingsPage() {
         </Box>
 
         <form onSubmit={handleSubmit}>
-          <TextField
-            label="Correo electrónico"
-            fullWidth
-            sx={{ mb: 2 }}
-            value={form.email}
-            onChange={handleChange('email')}
-          />
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <TextField
+                label="Correo electrónico"
+                fullWidth
+                value={form.email}
+                onChange={handleChange('email')}
+              />
+            </Grid>
 
-          <TextField
-            label="Teléfono"
-            fullWidth
-            sx={{ mb: 2 }}
-            value={form.phone}
-            onChange={handleChange('phone')}
-          />
+            <Grid item xs={12}>
+              <TextField
+                label="Teléfono"
+                fullWidth
+                value={form.phone}
+                onChange={handleChange('phone')}
+              />
+            </Grid>
 
-          {showVehicleFields && (
-            <>
-              <TextField label="Unidad/Tipo de vehículo" fullWidth sx={{ mb: 2 }} value={form.vehicle} onChange={handleChange('vehicle')} />
-              <TextField label="Placa" fullWidth sx={{ mb: 2 }} value={form.plate} onChange={handleChange('plate')} />
-              <TextField label="Número de licencia" fullWidth sx={{ mb: 2 }} value={form.license_number} onChange={handleChange('license_number')} />
-            </>
-          )}
+            {showVehicleFields && (
+              <>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Unidad / Tipo de vehículo"
+                    fullWidth
+                    value={form.vehicle}
+                    onChange={handleChange('vehicle')}
+                  />
+                </Grid>
 
-          <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-            <Button type="submit" variant="contained" disabled={loading}>{loading ? 'Guardando...' : 'Guardar cambios'}</Button>
-            <Button variant="outlined" onClick={handleCancel} disabled={loading}>Cancelar</Button>
-          </Box>
+                <Grid item xs={12}>
+                  <TextField
+                    label="Placa"
+                    fullWidth
+                    value={form.plate}
+                    onChange={handleChange('plate')}
+                  />
+                </Grid>
 
-          {msg && (
-            <Typography color={msg.type === 'error' ? 'error' : 'success.main'} sx={{ mt: 2 }}>
-              {msg.text}
-            </Typography>
-          )}
+                <Grid item xs={12}>
+                  <TextField
+                    label="Número de licencia"
+                    fullWidth
+                    value={form.license_number}
+                    onChange={handleChange('license_number')}
+                  />
+                </Grid>
+              </>
+            )}
+
+            <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 1 }}>
+              <Button variant="outlined" onClick={handleCancel} disabled={loading}>Cancelar</Button>
+              <Button type="submit" variant="contained" disabled={loading}>
+                {loading ? 'Guardando...' : 'Guardar cambios'}
+              </Button>
+            </Grid>
+
+            {msg && (
+              <Grid item xs={12}>
+                <Typography color={msg.type === 'error' ? 'error' : 'success.main'} sx={{ mt: 1 }}>
+                  {msg.text}
+                </Typography>
+              </Grid>
+            )}
+          </Grid>
         </form>
       </Paper>
     </Container>

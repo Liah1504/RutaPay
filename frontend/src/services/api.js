@@ -3,6 +3,7 @@
 // ----------------- ACTUALIZADO -----------------
 // - driverAPI.getPaymentsSummary ahora apunta a admin path '/admin/drivers/payments/summary'
 // - Se agregó adminAPI.getDriverBalancesRange que envuelve ese endpoint.
+// - Se agregó notificationsAPI.markAllRead para marcar todas las notificaciones como leídas.
 
 import axios from 'axios';
 
@@ -102,20 +103,26 @@ export const routeAPI = {
 export const driverAPI = {
   getProfile: () => api.get('/drivers/profile'),
   getPayments: () => api.get('/drivers/payments'),
-  // <-- updated: call admin endpoint (requires admin token)
+  // updated: call admin endpoint (requires admin token) or other admin endpoints
   getPaymentsSummary: (params) => api.get('/admin/drivers/payments/summary', { params }),
   getNotifications: (limit = 5, unread = false) => api.get('/notifications', { params: { limit, unread } }),
   updateProfile: (data) => api.put('/drivers/profile', data)
 };
 
 export const notificationsAPI = {
+  // Get latest notifications for the current user (optionally only unread)
   getLatestForDriver: (limit = 10) => api.get('/notifications', { params: { limit, unread: true } }),
+  // Mark a single notification as read
   markAsRead: (id) => api.put(`/notifications/${id}/read`),
+  // Mark all notifications for the authenticated user as read
+  markAllRead: () => api.put('/notifications/read-all'),
+  // Get notifications for the current user (paginated)
   getForUser: (limit = 20) => api.get('/notifications', { params: { limit } }),
+  // Admin listing
   getForAdmin: (limit = 50, type = null) => api.get('/notifications/admin', { params: { limit, type } })
 };
 
-// ------- ADMIN API (incluye ingresos) -------
+// ------- ADMIN API (incluye ingresos y reportes) -------
 export const adminAPI = {
   getStats: () => api.get('/admin/stats'),
   getAllUsers: () => api.get('/admin/users'),

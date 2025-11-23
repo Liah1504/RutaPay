@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import IconButton from '@mui/material/IconButton';
@@ -102,7 +102,8 @@ const Header = () => {
     }
     try {
       setNotifsLoading(true);
-      const res = await notificationsAPI.getForUser(20, true);
+      // getForUser accepts limit; backend will handle unread filter if implemented
+      const res = await notificationsAPI.getForUser(20);
       const items = Array.isArray(res?.data) ? res.data : [];
       setNotifications(items);
       setUnreadCount(items.filter(i => !i.read).length);
@@ -268,12 +269,7 @@ const Header = () => {
           <Divider sx={{ my: 1 }} />
 
           <List>
-            {/* Removed "Mi perfil" per request — only keep Configuración and Cerrar sesión */}
-            <ListItemButton onClick={() => { navigate('/admin/settings'); setOpen(false); }} sx={{ borderRadius: 1 }}>
-              <ListItemIcon><SettingsIcon /></ListItemIcon>
-              <ListItemText primary="Configuración" />
-            </ListItemButton>
-
+            {/* NOTE: 'Configuración' entry removed from Drawer as requested */}
             <ListItemButton onClick={async () => { setOpen(false); await handleLogout(); }} sx={{ borderRadius: 1, mt: 1 }}>
               <ListItemIcon><ExitToAppIcon /></ListItemIcon>
               <ListItemText primary="Cerrar sesión" />
@@ -284,7 +280,7 @@ const Header = () => {
 
       {/* Avatar menu */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={closeProfileMenu} transformOrigin={{ horizontal: 'right', vertical: 'top' }} anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}>
-        {/* Removed "Mi perfil" menu item here too. Keep Ajustes and Cerrar sesión */}
+        {/* Keep Ajustes here in the avatar menu if you want users to still access settings */}
         <MenuItem onClick={() => { closeProfileMenu(); navigate('/admin/settings'); }}>
           <ListItemIcon><SettingsIcon fontSize="small" /></ListItemIcon>
           <ListItemText>Ajustes</ListItemText>
