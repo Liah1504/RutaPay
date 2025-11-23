@@ -1,92 +1,81 @@
 import { createTheme } from '@mui/material/styles';
 
-// Define nuestra paleta de colores inspirada en tu nuevo logo
+// Paleta elegante: navy oscuro principal y teal secundario (sin verde chillón)
 const theme = createTheme({
   palette: {
     primary: {
-      main: '#005691', // Azul oscuro principal del logo
-      light: '#007bb2', // Azul más claro del autobús
-      contrastText: '#ffffff',
+      main: '#073049', // navy oscuro para encabezados y acciones principales
+      contrastText: '#ffffff'
     },
     secondary: {
-      main: '#f9a825', // Un naranja/amarillo para botones de acción (complementa el azul)
-      contrastText: '#000000',
+      main: '#1f8a9a', // teal suave para tarjetas de ingresos y chips
+      contrastText: '#ffffff'
+    },
+    info: {
+      main: '#1976d2'
     },
     background: {
-      default: '#f4f7f6', // Este color ahora lo usa el "velo" en index.css
-      paper: '#ffffff',  // El fondo de las tarjetas y paneles
+      default: '#f4f7f6', // ligero gris suave
+      paper: '#ffffff'
     },
     text: {
-      primary: '#212121',
-      secondary: '#5f6368',
+      primary: '#0b2b3a',
+      secondary: '#546e7a'
+    },
+    success: {
+      main: '#2a9d8f',
+      contrastText: '#ffffff'
+    },
+    error: {
+      main: '#d32f2f'
     }
   },
   typography: {
-    fontFamily: 'Roboto, sans-serif',
-    h4: {
-      fontWeight: 700,
-    },
-    h5: {
-      fontWeight: 600,
-      color: '#005691', // Títulos en el color primario
-    },
-    h6: {
-      fontWeight: 600,
-    }
+    fontFamily: ['Inter', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'].join(','),
+    h4: { fontWeight: 700 },
+    h5: { fontWeight: 700 }
   },
+  shape: { borderRadius: 12 },
   components: {
-    MuiButton: {
-      styleOverrides: {
-        root: {
-          borderRadius: 8,
-          textTransform: 'none',
-          fontWeight: 600,
-          boxShadow: 'none',
-          padding: '10px 20px',
-          '&:hover': {
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          }
-        },
-      },
-    },
-    
-    // --- ¡AQUÍ ESTÁ LA MAGIA (PASO 2)! ---
-    MuiPaper: {
-      styleOverrides: {
-        root: {
-          borderRadius: 12,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-          // Hacemos el fondo de las tarjetas un poco transparente
-          // para que absorban el color del fondo de la página
-          backgroundColor: 'rgba(255, 255, 255, 0.85)',
-          backdropFilter: 'blur(10px)', // Efecto de desenfoque "vidrio esmerilado"
-        },
-      },
-    },
-    MuiAppBar: {
-      styleOverrides: {
-        root: {
-          // Hacemos la barra de navegación también semitransparente
-          backgroundColor: 'rgba(255, 255, 255, 0.7)', 
-          backdropFilter: 'blur(10px)',
-          color: '#212121',
-          boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
-        },
-      },
-    },
     MuiCard: {
       styleOverrides: {
         root: {
           borderRadius: 12,
-          boxShadow: 'none',
-          border: '1px solid #e0e0e0',
-          // Las tarjetas *dentro* de un Paper sí las dejamos sólidas
-          backgroundColor: '#ffffff' 
+          boxShadow: '0 6px 18px rgba(11,35,50,0.06)'
         }
       }
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: { borderRadius: 12 }
+      }
+    },
+    MuiButton: {
+      styleOverrides: {
+        containedPrimary: {
+          backgroundColor: '#0b63a7',
+          color: '#fff',
+          boxShadow: 'none',
+          '&:hover': { backgroundColor: '#085589' }
+        },
+        outlined: { borderRadius: 10 }
+      }
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          borderRadius: 20,
+          fontWeight: 700,
+          padding: '6px 12px'
+        }
+      }
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: { borderBottom: '1px solid rgba(11,35,50,0.06)' }
+      }
     }
-    // --- FIN DE LA MAGIA ---
-  },
+  }
 });
 
 export default theme;

@@ -1,6 +1,5 @@
 // backend/routes/admin.js
 // Rutas administrativas montadas en /api/admin
-// Asegúrate de que ../controllers/reportsController.js exista si quieres exponer reportes
 
 const express = require('express');
 const router = express.Router();
@@ -29,14 +28,6 @@ router.delete('/users/:id', adminProtect, adminController.deleteUser);
 router.post('/drivers', adminProtect, adminController.createDriver);
 
 // --- NUEVO: ingresos por periodo / rango ---
-/**
- * GET /api/admin/revenue
- * Query params:
- *  - period=day|week|month   (opcional, default 'day')
- *  - start=YYYY-MM-DD&end=YYYY-MM-DD  (opcional, rango explícito)
- *
- * Responde: { total: number, items: [{ date, amount }, ...] }
- */
 if (typeof adminController.getRevenue === 'function') {
   router.get('/revenue', adminProtect, adminController.getRevenue);
 } else {
@@ -51,6 +42,17 @@ if (reportsController && typeof reportsController.driverDailyBalancesByCode === 
 } else {
   router.get('/reports/driver-daily-balances', adminProtect, (req, res) => {
     res.status(501).json({ error: 'Report controller no implementado en este servidor' });
+  });
+}
+
+// --- NUEVO: resumen de pagos por conductor (rango o fecha) ---
+// GET /api/admin/drivers/payments/summary?date=YYYY-MM-DD
+// or  GET /api/admin/drivers/payments/summary?start=YYYY-MM-DD&end=YYYY-MM-DD
+if (typeof adminController.getDriverPaymentsSummary === 'function') {
+  router.get('/drivers/payments/summary', adminProtect, adminController.getDriverPaymentsSummary);
+} else {
+  router.get('/drivers/payments/summary', adminProtect, (req, res) => {
+    res.status(501).json({ error: 'Endpoint driver payments summary no implementado' });
   });
 }
 

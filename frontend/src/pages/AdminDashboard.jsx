@@ -3,7 +3,7 @@ import {
   Container, Paper, Typography, Box, Grid, Table,
   TableBody, TableCell, TableContainer, TableHead, TableRow, Chip,
   Button, CircularProgress, Alert, Dialog, DialogTitle, DialogContent,
-  IconButton, Tooltip, Card, CardContent, TextField, Tabs, Tab
+  IconButton, Tooltip, Card, CardContent, TextField, Tabs, Tab, CardContent as MCardContent
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -19,11 +19,10 @@ import UserForm from '../components/UserForm';
 import RouteForm from '../components/RouteForm';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api from '../services/api'; // instancia centralizada axios
-
-// Componente de reporte reutilizado
-import DriverDailyBalances from '../components/DriverDailyBalances';
+import { useTheme } from '@mui/material/styles';
 
 const AdminDashboard = () => {
+  const theme = useTheme();
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -440,6 +439,23 @@ const AdminDashboard = () => {
         )}
 
         <Grid container spacing={3}>
+          {/* INGRESOS DEL DÍA: moved to top and uses theme primary (blue) */}
+          {loadingRevenue ? (
+            <Grid item xs={12}><Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box></Grid>
+          ) : (
+            <Grid item xs={12}>
+              <Card sx={{ bgcolor: theme.palette.primary.main, display: 'flex', alignItems: 'center', p: 2, height: '100px' }}>
+                <CardContent sx={{ pb: '16px !important' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                    <AttachMoneyIcon sx={{ color: 'white', mr: 1, fontSize: '1.8rem' }} />
+                    <Typography variant="body2" color="white" sx={{ fontWeight: 'bold' }}>INGRESOS DEL DÍA</Typography>
+                  </Box>
+                  <Typography variant="h3" sx={{ fontWeight: 700, color: 'white' }}>{formatCurrency(dailyRevenue)}</Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
+
           <Grid item xs={12} md={7}>
             <Paper sx={{ p: 3, height: '100%' }}>
               <Typography variant="h5" gutterBottom color="primary">💰 Recargas de Saldo Pendientes ({pendingRecharges.length})</Typography>
@@ -559,23 +575,6 @@ const AdminDashboard = () => {
             </Paper>
           </Grid>
 
-          {/* INGRESOS DEL DÍA (full width) */}
-          {loadingRevenue ? (
-            <Grid item xs={12}><Box sx={{ display: 'flex', justifyContent: 'center', my: 3 }}><CircularProgress /></Box></Grid>
-          ) : (
-            <Grid item xs={12}>
-              <Card sx={{ bgcolor: '#4caf50', display: 'flex', alignItems: 'center', p: 2, height: '100px' }}>
-                <CardContent sx={{ pb: '16px !important' }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                    <AttachMoneyIcon sx={{ color: 'white', mr: 1, fontSize: '1.8rem' }} />
-                    <Typography variant="body2" color="white" sx={{ fontWeight: 'bold' }}>INGRESOS DEL DÍA</Typography>
-                  </Box>
-                  <Typography variant="h3" sx={{ fontWeight: 700, color: 'white' }}>{formatCurrency(dailyRevenue)}</Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-          )}
-
           {/* Estadísticas en tarjetas (counts basados en usuarios y rutas cargados) */}
           <Grid item xs={12}>
             <Grid container spacing={3}>
@@ -646,15 +645,6 @@ const AdminDashboard = () => {
               </Grid>
             </Grid>
           </Grid>
-
-          {/* ========================= */}
-          {/* Balance diario por conductor */}
-          <Grid item xs={12} sx={{ mt: 3 }}>
-            <Paper sx={{ p: 2 }}>
-              <DriverDailyBalances />
-            </Paper>
-          </Grid>
-          {/* ========================= */}
 
           {/* Mostrar Gestión de Usuarios SOLO cuando se haya seleccionado una pestaña */}
           {selectedTab !== null && (

@@ -28,6 +28,7 @@ import Alert from '@mui/material/Alert';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { notificationsAPI } from '../services/api';
+import { useTheme } from '@mui/material/styles';
 
 // Small inline SVG avatar fallback
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
@@ -52,6 +53,9 @@ const normalizeAvatarUrl = (url) => {
 };
 
 const Header = () => {
+  const theme = useTheme();
+  const avatarBg = theme?.palette?.primary?.main || '#0b63a7';
+
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -205,8 +209,6 @@ const Header = () => {
     { text: 'Reportes', icon: <AssessmentIcon />, action: () => { setOpen(false); navigate('/admin/reports'); } },
     { text: 'Ajustes', icon: <SettingsIcon />, action: () => { setOpen(false); navigate('/admin/settings'); } }
   ];
-
-  const avatarBg = '#0b63a7';
 
   return (
     <>

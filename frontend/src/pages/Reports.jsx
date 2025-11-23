@@ -2,35 +2,16 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Container, Typography, Box, Tabs, Tab, Paper, CircularProgress,
   Table, TableHead, TableRow, TableCell, TableBody, TableContainer,
-  Button, Stack
+  Button, Stack, TextField
 } from '@mui/material';
 import Header from '../components/Header';
-import DriverDailyBalances from '../components/DriverDailyBalances';
-import { adminAPI } from '../services/api';
-
-/**
- * Reports page
- * - Pestañas: Diario / Semanal / Mensual
- * - Llama adminAPI.getRevenue(period) y si viene vacío intenta adminAPI.getRevenueRange(start,end)
- * - Botón "Exportar CSV" para descargar el desglose (si hay items) o al menos el total
- */
+import { adminAPI, driverAPI } from '../services/api';
+import { useTheme } from '@mui/material/styles';
 
 const formatCurrency = (amount) => {
   const num = Number(amount || 0);
   if (!Number.isFinite(num)) return 'Bs 0,00';
   return `Bs ${num.toFixed(2).replace('.', ',')}`;
-};
-
-const formatDateLabel = (raw) => {
-  if (!raw) return '';
-  // raw puede ser Date, ISO string, or pg timestamp object - tratamos de normalizar
-  try {
-    const d = (raw instanceof Date) ? raw : new Date(raw);
-    if (Number.isNaN(d.getTime())) return String(raw);
-    return d.toLocaleString(); // formato local con fecha y hora
-  } catch {
-    return String(raw);
-  }
 };
 
 const toYMD = (d) => {
@@ -41,42 +22,53 @@ const toYMD = (d) => {
   return `${y}-${m}-${day}`;
 };
 
-const getRangeForPeriod = (period) => {
-  const today = new Date();
-  if (period === 'day') {
-    const s = toYMD(today);
-    return { start: s, end: s };
+// Format display date as DD/MM/YYYY (handles ISO strings or Date objects)
+const formatDisplayDate = (value) => {
+  if (!value) return '';
+  let dt;
+  if (value instanceof Date) {
+    dt = value;
+  } else {
+    const parsed = Date.parse(value);
+    if (!isNaN(parsed)) dt = new Date(parsed);
+    else {
+      const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m) dt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+      else return String(value);
+    }
   }
-  if (period === 'week') {
-    const first = new Date(today);
-    const day = first.getDay(); // 0..6 (Sun..Sat)
-    const diff = (day + 6) % 7; // convert so week starts Monday
-    first.setDate(first.getDate() - diff);
-    return { start: toYMD(first), end: toYMD(today) };
-  }
-  // month
-  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-  return { start: toYMD(firstDay), end: toYMD(today) };
+  const day = String(dt.getDate()).padStart(2, '0');
+  const month = String(dt.getMonth() + 1).padStart(2, '0');
+  const year = dt.getFullYear();
+  return `${day}/${month}/${year}`;
 };
 
-const buildCSV = (periodLabel, total, items = []) => {
-  // Header info
-  const header = [`"Reporte de ingresos: ${periodLabel}"`, `"Total: ${total}"`];
-  // Columns: Fecha, Monto
-  const cols = ['Fecha', 'Monto'];
+const parseDateValue = (v) => {
+  if (!v) return 0;
+  if (v instanceof Date) return v.getTime();
+  const p = Date.parse(v);
+  if (!isNaN(p)) return p;
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+  return 0;
+};
+
+const sortByDateDesc = (items = []) => {
+  return items.slice().sort((a, b) => parseDateValue(b.date ?? b.period ?? b.label) - parseDateValue(a.date ?? a.period ?? a.label));
+};
+
+const buildCSV = (title, total, items = [], cols = ['Fecha', 'Monto']) => {
+  const header = [`"${title}"`, `"Total: ${total}"`];
   const rows = items.map(it => {
     const date = it.date ?? it.period ?? it.label ?? '';
     const amount = it.amount ?? it.total ?? it.value ?? 0;
-    // ensure decimal point as dot for CSV numeric (we keep raw)
     return [`"${date}"`, `${Number(amount)}`];
   });
-  // join
   const parts = [];
   parts.push(header.join(','));
-  parts.push(''); // blank line
+  parts.push('');
   parts.push(cols.join(','));
   rows.forEach(r => parts.push(r.join(',')));
-  // final total row
   parts.push('');
   parts.push(`"TOTAL",${Number(total)}`);
   return parts.join('\n');
@@ -95,86 +87,140 @@ const downloadCSV = (filename, csvContent) => {
 };
 
 const Reports = () => {
+  const theme = useTheme();
+
   const [tab, setTab] = useState(0); // 0=day,1=week,2=month
-  const [loading, setLoading] = useState(false);
-  const [data, setData] = useState({ total: 0, items: [] });
-  const [message, setMessage] = useState('');
+  const [loadingIncome, setLoadingIncome] = useState(false);
+  const [incomeData, setIncomeData] = useState({ total: 0, items: [] });
+  const [incomeMsg, setIncomeMsg] = useState('');
+
+  const [driverStart, setDriverStart] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return toYMD(d);
+  });
+  const [driverEnd, setDriverEnd] = useState(() => toYMD(new Date()));
+  const [driverBalances, setDriverBalances] = useState([]);
+  const [loadingDriverBalances, setLoadingDriverBalances] = useState(false);
+  const [driverMsg, setDriverMsg] = useState('');
 
   const periodFromTab = (t) => (t === 0 ? 'day' : t === 1 ? 'week' : 'month');
 
-  const normalizePayload = (payload) => {
-    // payload can be array, or { total, items } or { items } etc.
-    if (!payload) return { total: 0, items: [] };
-    if (Array.isArray(payload)) {
-      const total = payload.reduce((s, it) => s + Number(it.amount ?? it.total ?? 0), 0);
-      return { total, items: payload };
-    }
-    const total = payload.total ?? payload.amount ?? 0;
-    const items = payload.items ?? payload.data ?? payload.rows ?? [];
-    return { total: Number(total || 0), items };
-  };
-
-  const tryFallbackRange = async (period) => {
-    // If getRevenue returned no items, attempt to fetch range for last 1/7/30 days
-    const { start, end } = getRangeForPeriod(period);
+  const fetchIncome = useCallback(async (period) => {
+    setLoadingIncome(true);
+    setIncomeMsg('');
     try {
-      const res = await adminAPI.getRevenueRange(start, end);
-      const pl = res?.data ?? res;
-      const normalized = normalizePayload(pl);
-      return normalized;
-    } catch (err) {
-      console.warn('Fallback range failed:', err);
-      return { total: 0, items: [] };
-    }
-  };
-
-  const fetchFor = useCallback(async (period) => {
-    setLoading(true);
-    setMessage('');
-    setData({ total: 0, items: [] });
-    try {
-      // primary call
       const res = await adminAPI.getRevenue(period);
-      const payload = res?.data ?? res;
-      let normalized = normalizePayload(payload);
-
-      // If no items returned, try fallback range endpoint
-      if ((!normalized.items || normalized.items.length === 0) && (period === 'week' || period === 'month' || period === 'day')) {
-        const fallback = await tryFallbackRange(period);
-        if (fallback.items && fallback.items.length > 0) {
-          normalized = fallback;
-        }
-      }
-
-      setData(normalized);
-      if (!normalized.items || normalized.items.length === 0) {
-        setMessage('No hay datos detallados para este periodo.');
-      } else {
-        setMessage('');
-      }
+      const payload = res?.data ?? res ?? { total: 0, items: [] };
+      const items = payload.items ?? payload.data ?? payload.rows ?? [];
+      // sort income items so today's entries (or latest) appear first
+      const sorted = sortByDateDesc(items);
+      setIncomeData({ total: Number(payload.total ?? 0), items: sorted });
+      if (!items || items.length === 0) setIncomeMsg('No hay datos detallados para este periodo.');
     } catch (err) {
-      console.error('Error fetching reports:', err);
-      setMessage('Error al cargar el reporte. Revisa la consola o el endpoint /api/admin/revenue.');
-      setData({ total: 0, items: [] });
+      console.error('Error fetching income report:', err);
+      setIncomeData({ total: 0, items: [] });
+      setIncomeMsg('Error al cargar el reporte de ingresos.');
     } finally {
-      setLoading(false);
+      setLoadingIncome(false);
     }
   }, []);
 
-  useEffect(() => {
-    const period = periodFromTab(tab);
-    fetchFor(period);
-  }, [tab, fetchFor]);
+  // Fetch driver balances (calls admin endpoint that groups by driver/day)
+  const fetchDriverBalances = useCallback(async (start, end) => {
+    setLoadingDriverBalances(true);
+    setDriverMsg('');
+    try {
+      const params = { start, end };
+      if (adminAPI.getDriverPaymentsSummary) {
+        const res = await adminAPI.getDriverPaymentsSummary(params);
+        const payload = res?.data ?? res ?? { items: [] };
+        const items = payload.items ?? payload;
+        const sorted = sortByDateDesc(items);
+        setDriverBalances(sorted);
+        if (!items || items.length === 0) setDriverMsg('No hay datos para el rango seleccionado.');
+        setLoadingDriverBalances(false);
+        return;
+      }
 
-  const handleExport = () => {
-    const period = periodFromTab(tab);
-    const filenameBase = (period === 'day') ? `incomes_day_${toYMD(new Date())}`
-      : (period === 'week') ? `incomes_week_${getRangeForPeriod('week').start}_to_${getRangeForPeriod('week').end}`
-      : `incomes_month_${new Date().getFullYear()}_${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      if (adminAPI.getDriverBalancesRange) {
+        const res = await adminAPI.getDriverBalancesRange(start, end, null);
+        const payload = res?.data ?? res ?? { items: [] };
+        const items = payload.items ?? payload;
+        const sorted = sortByDateDesc(items);
+        setDriverBalances(sorted);
+        if (!items || items.length === 0) setDriverMsg('No hay datos para el rango seleccionado.');
+        setLoadingDriverBalances(false);
+        return;
+      }
 
-    const periodLabel = period.toUpperCase();
-    const csv = buildCSV(periodLabel, data.total, data.items);
-    downloadCSV(`${filenameBase}.csv`, csv);
+      // Fallback to driverAPI per-day (best-effort)
+      const s = new Date(start);
+      const e = new Date(end);
+      const days = [];
+      for (let dt = new Date(s); dt <= e; dt.setDate(dt.getDate() + 1)) days.push(new Date(dt));
+      const results = [];
+      for (const d of days) {
+        const dayYmd = toYMD(d);
+        try {
+          const summary = await driverAPI.getPaymentsSummary(dayYmd);
+          const items = summary?.data ?? summary ?? [];
+          results.push(...items.map(it => ({
+            name: it.driver_name ?? it.name ?? it.driver ?? 'N/A',
+            driver_code: it.driver_code ?? it.code ?? '',
+            phone: it.driver_phone ?? it.phone ?? '',
+            date: it.date ?? dayYmd,
+            payments: it.count ?? it.payments ?? 1,
+            total_received: Number(it.amount ?? it.total ?? 0)
+          })));
+        } catch (err) {
+          console.warn('driver summary fetch error for', dayYmd, err);
+        }
+      }
+      const sorted = sortByDateDesc(results);
+      setDriverBalances(sorted);
+      if (results.length === 0) setDriverMsg('No hay datos para el rango seleccionado (fallback).');
+    } catch (err) {
+      console.error('Error fetching driver balances:', err);
+      setDriverBalances([]);
+      setDriverMsg('Error al consultar balances por conductor.');
+    } finally {
+      setLoadingDriverBalances(false);
+    }
+  }, []);
+
+  const handleExportIncome = () => {
+    const period = periodFromTab(tab);
+    const filename = `incomes_${period}_${toYMD(new Date())}.csv`;
+    const csv = buildCSV(`Ingresos (${period.toUpperCase()})`, incomeData.total, incomeData.items, ['Fecha', 'Monto']);
+    downloadCSV(filename, csv);
+  };
+
+  const handleExportDrivers = () => {
+    const filename = `driver_balances_${driverStart}_${driverEnd}.csv`;
+    const cols = ['Nombre', 'Código', 'Teléfono', 'Fecha', 'Pagos', 'Total recibido (Bs)'];
+    const rows = driverBalances.map(d => [
+      `"${d.name ?? ''}"`,
+      `"${d.driver_code ?? d.code ?? ''}"`,
+      `"${d.phone ?? ''}"`,
+      `"${formatDisplayDate(d.date) ?? ''}"`,
+      `${d.payments ?? 0}`,
+      `${Number(d.total_received ?? 0)}`
+    ]);
+    const parts = [];
+    parts.push(`"Balance Por Conductor"`);
+    parts.push('');
+    parts.push(cols.join(','));
+    rows.forEach(r => parts.push(r.join(',')));
+    downloadCSV(filename, parts.join('\n'));
+  };
+
+  useEffect(() => { const period = periodFromTab(tab); fetchIncome(period); }, [tab, fetchIncome]);
+
+  const handleConsultarDrivers = async () => {
+    setDriverMsg('');
+    // Query all drivers in the selected range (now sorted newest-first)
+    await fetchDriverBalances(driverStart, driverEnd);
   };
 
   return (
@@ -183,8 +229,14 @@ const Reports = () => {
       <Container maxWidth="xl" sx={{ pt: 4, pb: 4 }}>
         <Typography variant="h4" gutterBottom>📊 Reportes de Ingresos</Typography>
 
-        <Paper sx={{ p: 2, mb: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, gap: 2, flexWrap: 'wrap' }}>
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Box sx={{ mb: 1 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1.25rem', lineHeight: 1.2, m: 0, color: 'text.primary' }}>
+              Reporte de Recargas Recibidas
+            </Typography>
+          </Box>
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             <Tabs value={tab} onChange={(e, v) => setTab(v)} sx={{ flex: '1 1 auto' }}>
               <Tab label="Diario" />
               <Tab label="Semanal" />
@@ -192,28 +244,20 @@ const Reports = () => {
             </Tabs>
 
             <Stack direction="row" spacing={1} sx={{ ml: 'auto' }}>
-              <Button variant="outlined" onClick={() => { /* allow refresh */ const p = periodFromTab(tab); fetchFor(p); }}>
-                Consultar
-              </Button>
-              <Button
-                variant="contained"
-                onClick={handleExport}
-                disabled={!(data.items && data.items.length > 0)}
-              >
+              <Button variant="contained" color="primary" onClick={handleExportIncome} disabled={!(incomeData.items && incomeData.items.length > 0)}>
                 Exportar CSV
               </Button>
             </Stack>
           </Box>
 
           <Box sx={{ p: 2 }}>
-            {loading ? (
+            {loadingIncome ? (
               <Box sx={{ display: 'flex', justifyContent: 'center' }}><CircularProgress /></Box>
             ) : (
               <>
-                <Typography variant="h6" sx={{ mb: 1 }}>Total: {formatCurrency(data.total)}</Typography>
-                {message && <Typography color="text.secondary" sx={{ mb: 1 }}>{message}</Typography>}
-
-                {data.items && data.items.length > 0 ? (
+                <Typography variant="h6" sx={{ mb: 1 }}>Total: {formatCurrency(incomeData.total)}</Typography>
+                {incomeMsg && <Typography color="text.secondary" sx={{ mb: 1 }}>{incomeMsg}</Typography>}
+                {incomeData.items && incomeData.items.length > 0 && (
                   <TableContainer>
                     <Table size="small">
                       <TableHead>
@@ -223,25 +267,100 @@ const Reports = () => {
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {data.items.map((it, idx) => (
+                        {incomeData.items.map((it, idx) => (
                           <TableRow key={it.date ?? it.period ?? idx}>
-                            <TableCell>{formatDateLabel(it.date ?? it.period ?? it.label)}</TableCell>
+                            <TableCell>{formatDisplayDate(it.date ?? it.period ?? it.label)}</TableCell>
                             <TableCell align="right">{formatCurrency(it.amount ?? it.total ?? 0)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
                   </TableContainer>
-                ) : null}
+                )}
               </>
             )}
           </Box>
         </Paper>
 
-        {/* Reusar balance de conductores */}
-        <Box sx={{ mt: 2 }}>
-          <DriverDailyBalances />
-        </Box>
+        <Paper sx={{ p: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+            <Typography variant="h6" sx={{ fontWeight: 600, fontSize: '1.25rem', lineHeight: 1.2, m: 0, color: 'text.primary' }}>
+              Balance Por Conductor
+            </Typography>
+
+            <TextField
+              label="Desde"
+              type="date"
+              size="small"
+              variant="outlined"
+              value={driverStart}
+              onChange={(e) => setDriverStart(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ width: 160 }}
+            />
+            <TextField
+              label="Hasta"
+              type="date"
+              size="small"
+              variant="outlined"
+              value={driverEnd}
+              onChange={(e) => setDriverEnd(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              sx={{ width: 160 }}
+            />
+
+            <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+              <Button variant="outlined" onClick={handleConsultarDrivers} disabled={loadingDriverBalances}>
+                {loadingDriverBalances ? <CircularProgress size={18} /> : 'CONSULTAR'}
+              </Button>
+
+              <Button variant="contained" color="primary" onClick={handleExportDrivers} disabled={!(driverBalances && driverBalances.length > 0)}>
+                EXPORTAR CSV
+              </Button>
+            </Box>
+          </Box>
+
+          <Box>
+            {loadingDriverBalances ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}><CircularProgress /></Box>
+            ) : driverMsg ? (
+              <Typography color="text.secondary">{driverMsg}</Typography>
+            ) : (
+              <>
+                { (driverBalances && driverBalances.length > 0) ? (
+                  <TableContainer>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Nombre</TableCell>
+                          <TableCell>Código</TableCell>
+                          <TableCell>Teléfono</TableCell>
+                          <TableCell>Fecha</TableCell>
+                          <TableCell align="right">Pagos</TableCell>
+                          <TableCell align="right">Total recibido (Bs)</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {driverBalances.map((d, i) => (
+                          <TableRow key={i}>
+                            <TableCell>{d.name}</TableCell>
+                            <TableCell>{d.driver_code ?? d.code}</TableCell>
+                            <TableCell>{d.phone}</TableCell>
+                            <TableCell>{formatDisplayDate(d.date)}</TableCell>
+                            <TableCell align="right">{d.payments ?? d.count ?? 0}</TableCell>
+                            <TableCell align="right">{formatCurrency(d.total_received ?? d.amount ?? 0)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                ) : (
+                  <Typography color="text.secondary">No hay datos. Selecciona un rango y presiona "Consultar".</Typography>
+                )}
+              </>
+            )}
+          </Box>
+        </Paper>
       </Container>
     </>
   );

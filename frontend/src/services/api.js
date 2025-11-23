@@ -1,19 +1,40 @@
 // src/services/api.js
-// Instancia axios centralizada: exporta `api` como default y wrappers (userAPI, adminAPI, etc.)
-// MODIFICADO POR MÍ: usar una instancia central `api` para que AuthContext aplique token sobre la misma instancia.
+// Instancia axios centralizada: exporta `api` como default y wrappers (userAPI, authAPI, tripAPI, rechargeAPI, routeAPI, driverAPI, notificationsAPI, adminAPI, paymentAPI)
+// ----------------- ACTUALIZADO -----------------
+// - driverAPI.getPaymentsSummary ahora apunta a admin path '/admin/drivers/payments/summary'
+// - Se agregó adminAPI.getDriverBalancesRange que envuelve ese endpoint.
 
 import axios from 'axios';
 
 const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_URL)
-  ? `${import.meta.env.VITE_API_URL}/api`
+  ? `${import.meta.env.VITE_API_URL.replace(/\/$/, '')}/api`
   : 'http://localhost:5002/api';
 
 const api = axios.create({
   baseURL: API_BASE,
-  headers: { 'Content-Type': 'application/json' }
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 30000
 });
 
-// Si ya hay token guardado por el AuthContext (clave: 'rutapay_token'), aplicarlo al arrancar
+// Token helper utilities
+export const setAuthToken = (token) => {
+  try {
+    if (token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      localStorage.setItem('rutapay_token', token);
+    } else {
+      delete api.defaults.headers.common['Authorization'];
+      localStorage.removeItem('rutapay_token');
+    }
+  } catch (err) {
+    // ignore storage errors
+    console.warn('setAuthToken error', err);
+  }
+};
+
+export const clearAuthToken = () => setAuthToken(null);
+
+// Apply stored token (if any) at startup
 try {
   const stored = localStorage.getItem('rutapay_token');
   if (stored) {
@@ -22,6 +43,25 @@ try {
 } catch (e) {
   // ignore
 }
+
+// Response interceptor: if 401, clear token (optional) and propagate
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const originalRequest = error?.config;
+    if (error?.response?.status === 401 && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+      // optional: clear token so user can login again
+      try {
+        localStorage.removeItem('rutapay_token');
+        delete api.defaults.headers.common['Authorization'];
+      } catch (e) { /* ignore */ }
+    }
+    return Promise.reject(error);
+  }
+);
+
+// --- API wrappers ---
 
 export const userAPI = {
   getProfile: () => api.get('/users/profile'),
@@ -62,7 +102,8 @@ export const routeAPI = {
 export const driverAPI = {
   getProfile: () => api.get('/drivers/profile'),
   getPayments: () => api.get('/drivers/payments'),
-  getPaymentsSummary: (date) => api.get('/drivers/payments/summary', { params: { date } }),
+  // <-- updated: call admin endpoint (requires admin token)
+  getPaymentsSummary: (params) => api.get('/admin/drivers/payments/summary', { params }),
   getNotifications: (limit = 5, unread = false) => api.get('/notifications', { params: { limit, unread } }),
   updateProfile: (data) => api.put('/drivers/profile', data)
 };
@@ -74,7 +115,7 @@ export const notificationsAPI = {
   getForAdmin: (limit = 50, type = null) => api.get('/notifications/admin', { params: { limit, type } })
 };
 
-// ------- ADMIN API (añadidas funciones de revenue) -------
+// ------- ADMIN API (incluye ingresos) -------
 export const adminAPI = {
   getStats: () => api.get('/admin/stats'),
   getAllUsers: () => api.get('/admin/users'),
@@ -88,10 +129,19 @@ export const adminAPI = {
     return await api.post('/auth/register', payloadWithRole);
   },
 
-  // Nuevo: obtener ingresos por periodo (day|week|month)
+  // Obtener ingresos por periodo (day|week|month)
   getRevenue: (period = 'day') => api.get('/admin/revenue', { params: { period } }),
-  // Nuevo: obtener ingresos por rango start/end (YYYY-MM-DD)
-  getRevenueRange: (start, end) => api.get('/admin/revenue', { params: { start, end } })
+  // Obtener ingresos por rango start/end (YYYY-MM-DD)
+  getRevenueRange: (start, end) => api.get('/admin/revenue', { params: { start, end } }),
+
+  // Nuevo: resumen pagos por conductor (rango o fecha)
+  // llamable desde frontend admin pages (necesita token con rol admin)
+  getDriverPaymentsSummary: (params) => api.get('/admin/drivers/payments/summary', { params }),
+  getDriverBalancesRange: (start, end, driverId = null) => {
+    const params = { start, end };
+    if (driverId) params.driverId = driverId;
+    return api.get('/admin/drivers/payments/summary', { params });
+  }
 };
 // ----------------------------------------------------------
 

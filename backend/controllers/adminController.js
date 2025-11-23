@@ -1,7 +1,6 @@
 // backend/controllers/adminController.js
 // Controlador admin: getStats, getAllUsers, updateUser, deleteUser, createDriver, getRevenue
-// MODIFICADO: conserva tu lógica original y añade getRevenue (periodo/rango).
-// Usa ../config/database tal como en tu repo.
+// Añadido: getDriverPaymentsSummary (resumen de pagos por conductor por día/rango)
 
 const db = require('../config/database');
 const bcrypt = require('bcryptjs');
@@ -118,7 +117,6 @@ const createDriver = async (req, res) => {
     const userId = newUser.rows[0].id;
 
     // Generar driver_code seguro: considerar sólo códigos que sean enteros
-    // Evita fallos si hay driver_code no numérico
     const codeRes = await db.query(
       `SELECT COALESCE(MAX( (CASE WHEN driver_code ~ '^[0-9]+$' THEN driver_code::int ELSE NULL END) ), 100) + 1 AS next_code
        FROM drivers`
@@ -147,37 +145,34 @@ const createDriver = async (req, res) => {
 
 /**
  * getRevenue:
- * Soporta:
- *  - /api/admin/revenue?period=day|week|month
- *  - /api/admin/revenue?start=YYYY-MM-DD&end=YYYY-MM-DD
- *
- * Devuelve: { total: number, items: [{ date, amount }, ...] }
- *
- * Implementación defensiva: si existe tabla payments la usa; si no, intenta recharges.
+ * - POR DEFECTO devuelve ingresos desde la tabla `recharges` (Pago Móvil), filtrando sólo recargas confirmadas.
+ * - Soporta period=day|week|month y start/end (YYYY-MM-DD).
+ * - Fallback: si no existe la tabla recharges intenta payments.
  */
 const getRevenue = async (req, res) => {
   try {
     const { period, start, end } = req.query;
 
-    // Detectar tabla source: payments preferred, else recharges
-    const tblCheck = await db.query(`SELECT to_regclass('public.payments') AS tpayments, to_regclass('public.recharges') AS trecharges`);
-    const hasPayments = Boolean(tblCheck.rows[0]?.tpayments);
+    // Detectar tablas disponibles
+    const tblCheck = await db.query(`SELECT to_regclass('public.recharges') AS trecharges, to_regclass('public.payments') AS tpayments`);
     const hasRecharges = Boolean(tblCheck.rows[0]?.trecharges);
+    const hasPayments = Boolean(tblCheck.rows[0]?.tpayments);
 
-    const sourceTable = hasPayments ? 'payments' : (hasRecharges ? 'recharges' : null);
+    // PRIORIDAD: recharges (Pago Móvil) -> payments
+    const sourceTable = hasRecharges ? 'recharges' : (hasPayments ? 'payments' : null);
     if (!sourceTable) {
-      // No hay tablas conocidas, respondemos vacío
       return res.json({ total: 0, items: [] });
     }
 
-    const isRecharge = sourceTable === 'recharges';
+    const isRechargeSource = sourceTable === 'recharges';
 
-    // Rango start/end => group by day
+    // Si se provee rango start/end
     if (start && end) {
       const q = `
         SELECT date_trunc('day', created_at)::date AS date, SUM(amount)::numeric::float8 AS amount
         FROM ${sourceTable}
-        ${isRecharge ? "WHERE status IN ('confirmada','confirmed') AND created_at::date BETWEEN $1::date AND $2::date" : "WHERE created_at::date BETWEEN $1::date AND $2::date"}
+        ${isRechargeSource ? "WHERE status IN ('confirmada','confirmed') AND created_at::date BETWEEN $1::date AND $2::date"
+                           : "WHERE created_at::date BETWEEN $1::date AND $2::date"}
         GROUP BY 1 ORDER BY 1
       `;
       const r = await db.query(q, [start, end]);
@@ -185,15 +180,15 @@ const getRevenue = async (req, res) => {
       return res.json({ total, items: r.rows.map(rw => ({ date: rw.date, amount: Number(rw.amount || 0) })) });
     }
 
-    // Interpretar period (default day)
+    // Por periodo
     const p = (period || 'day').toString().toLowerCase();
 
     if (p === 'day') {
-      // Agrupar por hora para hoy
+      // Agrupar por hora del día actual
       const q = `
         SELECT date_trunc('hour', created_at) AS period, SUM(amount)::numeric::float8 AS amount
         FROM ${sourceTable}
-        ${isRecharge ? "WHERE status IN ('confirmada','confirmed') AND created_at::date = current_date" : "WHERE created_at::date = current_date"}
+        ${isRechargeSource ? "WHERE status IN ('confirmada','confirmed') AND created_at::date = current_date" : "WHERE created_at::date = current_date"}
         GROUP BY 1 ORDER BY 1
       `;
       const r = await db.query(q);
@@ -204,7 +199,7 @@ const getRevenue = async (req, res) => {
       const q = `
         SELECT date_trunc('day', created_at)::date AS date, SUM(amount)::numeric::float8 AS amount
         FROM ${sourceTable}
-        ${isRecharge ? "WHERE status IN ('confirmada','confirmed') AND created_at >= date_trunc('week', current_date)" : "WHERE created_at >= date_trunc('week', current_date)"}
+        ${isRechargeSource ? "WHERE status IN ('confirmada','confirmed') AND created_at >= date_trunc('week', current_date)" : "WHERE created_at >= date_trunc('week', current_date)"}
         GROUP BY 1 ORDER BY 1
       `;
       const r = await db.query(q);
@@ -214,7 +209,7 @@ const getRevenue = async (req, res) => {
       const q = `
         SELECT date_trunc('day', created_at)::date AS date, SUM(amount)::numeric::float8 AS amount
         FROM ${sourceTable}
-        ${isRecharge ? "WHERE status IN ('confirmada','confirmed') AND created_at >= date_trunc('month', current_date)" : "WHERE created_at >= date_trunc('month', current_date)"}
+        ${isRechargeSource ? "WHERE status IN ('confirmada','confirmed') AND created_at >= date_trunc('month', current_date)" : "WHERE created_at >= date_trunc('month', current_date)"}
         GROUP BY 1 ORDER BY 1
       `;
       const r = await db.query(q);
@@ -222,11 +217,120 @@ const getRevenue = async (req, res) => {
       return res.json({ total, items: r.rows.map(rw => ({ date: rw.date, amount: Number(rw.amount || 0) })) });
     }
 
-    // period inválido
     return res.status(400).json({ error: 'Parámetro period inválido. Use day|week|month o start/end' });
   } catch (err) {
     console.error('❌ Error adminController.getRevenue:', err);
     return res.status(500).json({ error: 'Error obteniendo ingresos' });
+  }
+};
+
+/**
+ * getDriverPaymentsSummary
+ * - Devuelve resumen de pagos por conductor agrupado por día.
+ * - Query params: date=YYYY-MM-DD (single day) o start=YYYY-MM-DD&end=YYYY-MM-DD (rango)
+ * - Respuesta: { total, items: [{ driver_id, driver_code, name, phone, date, payments, total_received }, ...] }
+ */
+const getDriverPaymentsSummary = async (req, res) => {
+  try {
+    const { date, start, end } = req.query;
+
+    let startDate, endDate;
+    if (date) {
+      startDate = date;
+      endDate = date;
+    } else if (start && end) {
+      startDate = start;
+      endDate = end;
+    } else {
+      // default last 7 days
+      const e = new Date();
+      const s = new Date();
+      s.setDate(e.getDate() - 6);
+      const toYmd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      startDate = toYmd(s);
+      endDate = toYmd(e);
+    }
+
+    // Check table existence
+    const tblCheck = await db.query(`SELECT to_regclass('public.payments') AS tpayments, to_regclass('public.recharges') AS trecharges`);
+    const hasPayments = Boolean(tblCheck.rows[0]?.tpayments);
+    const hasRecharges = Boolean(tblCheck.rows[0]?.trecharges);
+
+    // Prefer payments table (assumes payments.driver_id exists). If not, try payments-like table or return informative 404.
+    if (!hasPayments && !hasRecharges) {
+      return res.status(404).json({ error: 'No existe tabla de payments ni recharges en la base de datos' });
+    }
+
+    // If payments exists, use it. Otherwise attempt to use recharges if it contains driver_id (rare).
+    if (hasPayments) {
+      const sql = `
+        SELECT
+          d.id AS driver_id,
+          COALESCE(d.driver_code, '') AS driver_code,
+          COALESCE(u.name, '') AS driver_name,
+          COALESCE(u.phone, '') AS driver_phone,
+          date_trunc('day', p.created_at)::date AS date,
+          COUNT(*)::int AS payments,
+          COALESCE(SUM(p.amount),0)::numeric::float8 AS total_received
+        FROM payments p
+        JOIN drivers d ON d.id = p.driver_id
+        LEFT JOIN users u ON u.id = d.user_id
+        WHERE p.created_at::date BETWEEN $1::date AND $2::date
+        GROUP BY d.id, d.driver_code, u.name, u.phone, date
+        ORDER BY date ASC, driver_name ASC
+      `;
+      const r = await db.query(sql, [startDate, endDate]);
+      const items = r.rows.map(row => ({
+        driver_id: row.driver_id,
+        driver_code: row.driver_code,
+        name: row.driver_name,
+        phone: row.driver_phone,
+        date: row.date,
+        payments: Number(row.payments || 0),
+        total_received: Number(row.total_received || 0)
+      }));
+      const total = items.reduce((s, it) => s + Number(it.total_received || 0), 0);
+      return res.json({ total, items });
+    }
+
+    // Fallback using recharges table (if it stores driver_id)
+    if (hasRecharges) {
+      // Try to run a query assuming recharges.driver_id exists
+      const sql = `
+        SELECT
+          d.id AS driver_id,
+          COALESCE(d.driver_code, '') AS driver_code,
+          COALESCE(u.name, '') AS driver_name,
+          COALESCE(u.phone, '') AS driver_phone,
+          date_trunc('day', r.created_at)::date AS date,
+          COUNT(*)::int AS payments,
+          COALESCE(SUM(r.amount),0)::numeric::float8 AS total_received
+        FROM recharges r
+        JOIN drivers d ON d.id = r.driver_id
+        LEFT JOIN users u ON u.id = d.user_id
+        WHERE r.created_at::date BETWEEN $1::date AND $2::date
+          AND r.status IN ('confirmada','confirmed')
+        GROUP BY d.id, d.driver_code, u.name, u.phone, date
+        ORDER BY date ASC, driver_name ASC
+      `;
+      const r = await db.query(sql, [startDate, endDate]);
+      const items = r.rows.map(row => ({
+        driver_id: row.driver_id,
+        driver_code: row.driver_code,
+        name: row.driver_name,
+        phone: row.driver_phone,
+        date: row.date,
+        payments: Number(row.payments || 0),
+        total_received: Number(row.total_received || 0)
+      }));
+      const total = items.reduce((s, it) => s + Number(it.total_received || 0), 0);
+      return res.json({ total, items });
+    }
+
+    return res.status(500).json({ error: 'No se pudo obtener resumen de pagos' });
+  } catch (error) {
+    console.error('❌ Error adminController.getDriverPaymentsSummary:', error);
+    return res.status(500).json({ error: 'Error obteniendo resumen de pagos por conductor' });
   }
 };
 
@@ -236,5 +340,6 @@ module.exports = {
   updateUser,
   deleteUser,
   createDriver,
-  getRevenue
+  getRevenue,
+  getDriverPaymentsSummary
 };
