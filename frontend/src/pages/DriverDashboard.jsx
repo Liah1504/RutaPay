@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Container, Paper, Typography, Box, Grid, CircularProgress, TableContainer, Table,
-  TableHead, TableRow, TableCell, TableBody, Avatar, Chip, TextField
+  TableHead, TableRow, TableCell, TableBody, Avatar, Chip, TextField, Alert
 } from '@mui/material';
 import { Groups, MonetizationOn, TrendingUp } from '@mui/icons-material';
 import {
@@ -9,16 +9,9 @@ import {
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
 import Header from '../components/Header';
-import { driverAPI } from '../services/api';
+import { driverAPI, adminAPI } from '../services/api';
 
-/**
- * DriverDashboard — visual-only fixes for chart labels and avatar fallback.
- * Works with the AuthContext you provided (it expects useAuth() -> { user, ... }).
- *
- * NOTE: removed local notification snackbar to avoid duplicate toasts.
- */
-
-// Inline SVG fallback avatar (no external files)
+/* Fallback avatar inline */
 const DEFAULT_AVATAR = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 24 24'>
      <rect width='100%' height='100%' fill='#eef3f5' rx='6'/>
@@ -68,8 +61,13 @@ const niceMax = (value) => {
   return 10 * pow;
 };
 
+const formatCurrency = (v) => {
+  const n = Number(v || 0);
+  return `${n.toFixed(2)} BS`;
+};
+
 export default function DriverDashboard() {
-  const { user } = useAuth(); // uses your AuthContext
+  const { user } = useAuth();
 
   const [profile, setProfile] = useState(null);
   const [historyPayments, setHistoryPayments] = useState([]);
@@ -79,9 +77,15 @@ export default function DriverDashboard() {
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingTodaySummary, setLoadingTodaySummary] = useState(true);
   const [filterName, setFilterName] = useState('');
+  const [errorMsg, setErrorMsg] = useState(null);
 
-  // force remount of ResponsiveContainer so Recharts recalculates dims
   const [chartKey, setChartKey] = useState(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   const getLocalISODate = (d = new Date()) => {
     const yyyy = d.getFullYear();
@@ -91,40 +95,62 @@ export default function DriverDashboard() {
   };
 
   useEffect(() => {
-    let mounted = true;
+    let interval;
     const fetchAll = async () => {
+      if (!mountedRef.current) return;
       setLoadingGraph(true);
       setLoadingPayments(true);
       setLoadingTodaySummary(true);
+      setErrorMsg(null);
 
       try {
         const date = getLocalISODate();
-        const [profileRes, paymentsRes, summaryRes] = await Promise.all([
-          driverAPI.getProfile().catch(() => ({ data: null })),
-          driverAPI.getPayments().catch(() => ({ data: [] })),
-          driverAPI.getPaymentsSummary(date).catch(() => ({ data: { totals: [], total: 0, passengers_count: 0 } })),
+
+        // profile + payments (driver-scoped)
+        const [profileRes, paymentsRes] = await Promise.all([
+          driverAPI.getProfile().catch(err => ({ error: err })),
+          driverAPI.getPayments().catch(err => ({ error: err, data: [] }))
         ]);
 
-        if (!mounted) return;
+        if (!mountedRef.current) return;
 
-        setProfile(profileRes?.data ?? null);
+        if (profileRes && profileRes.data && !profileRes.error) setProfile(profileRes.data);
+        else setProfile(null);
 
         const pagos = Array.isArray(paymentsRes?.data) ? paymentsRes.data : [];
         setHistoryPayments(pagos);
         setLoadingPayments(false);
 
+        // summary: try driver endpoint first, fallback to admin only on 404
+        let summaryRes = null;
+        try {
+          summaryRes = await driverAPI.getPaymentsSummary({ date });
+        } catch (err) {
+          const status = err?.response?.status;
+          if (status === 404) {
+            // compatibility fallback
+            summaryRes = await adminAPI.getDriverPaymentsSummary({ date }).catch(e => { throw e; });
+          } else {
+            throw err; // propagate 401/403/other
+          }
+        }
+
+        if (!mountedRef.current) return;
+
         const rawSummary = summaryRes?.data ?? {};
-        const summaryBody = rawSummary?.data && typeof rawSummary.data === 'object' ? rawSummary.data : rawSummary;
-        const passengers_count = Number(summaryBody.passengers_count ?? summaryBody.passengers) || 0;
-        const total_today = parseFloat(summaryBody.total ?? summaryBody.total_amount) || 0;
+        const summaryBody = (rawSummary && typeof rawSummary === 'object' && rawSummary.data) ? rawSummary.data : rawSummary;
+
+        const passengers_count = Number(summaryBody.passengers_count ?? summaryBody.passengers ?? summaryBody.passenger_count ?? 0) || 0;
+        const total_today = parseFloat(summaryBody.total ?? summaryBody.total_amount ?? summaryBody.amount ?? 0) || 0;
         setTodaySummary({ passengers: passengers_count, total: total_today });
         setLoadingTodaySummary(false);
 
-        // normalize totals from various shapes
+        // totals array for chart - support multiple shapes
         let rawTotals = [];
-        if (Array.isArray(summaryRes?.data?.totals)) rawTotals = summaryRes.data.totals;
+        if (Array.isArray(summaryBody.totals)) rawTotals = summaryBody.totals;
+        else if (Array.isArray(rawSummary?.totals)) rawTotals = rawSummary.totals;
+        else if (Array.isArray(rawSummary?.data)) rawTotals = rawSummary.data;
         else if (Array.isArray(summaryRes?.data)) rawTotals = summaryRes.data;
-        else if (Array.isArray(summaryRes?.totals)) rawTotals = summaryRes.totals;
         else rawTotals = [];
 
         const normalized = rawTotals.map(item => ({
@@ -132,19 +158,31 @@ export default function DriverDashboard() {
           total: Number(item.total ?? item.amount ?? item.value) || 0,
         }));
 
-        // Visual-only sorting: place larger totals first (left) for easier reading
         const visuallyOrdered = [...normalized].sort((a, b) => b.total - a.total);
 
         setGraphData(visuallyOrdered);
         setChartKey(k => k + 1);
         setLoadingGraph(false);
 
-        // small delayed resize so Recharts picks up the final size
         setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch {} }, 80);
       } catch (err) {
         console.error('DriverDashboard fetch error:', err);
+        const status = err?.response?.status;
+        if (status === 401 || status === 403) {
+          setErrorMsg('No autorizado para ver resúmenes. Revisa tu sesión/permisos.');
+        } else {
+          setErrorMsg('No se pudieron cargar los datos del dashboard. Se muestra historial si está disponible.');
+        }
+
+        // best-effort: try to ensure payments history is available
+        try {
+          const paymentsOnly = await driverAPI.getPayments().catch(() => ({ data: [] }));
+          if (mountedRef.current) setHistoryPayments(Array.isArray(paymentsOnly?.data) ? paymentsOnly.data : []);
+        } catch (e) {
+          console.warn('payments fetch after error failed', e);
+        }
+
         setGraphData([]);
-        setHistoryPayments([]);
         setTodaySummary({ passengers: 0, total: 0 });
         setLoadingGraph(false);
         setLoadingPayments(false);
@@ -153,8 +191,8 @@ export default function DriverDashboard() {
     };
 
     fetchAll();
-    const interval = setInterval(fetchAll, 10000);
-    return () => { mounted = false; clearInterval(interval); };
+    interval = setInterval(fetchAll, 10000);
+    return () => { clearInterval(interval); };
   }, [user?.id]);
 
   const filteredPayments = filterName.trim()
@@ -164,7 +202,6 @@ export default function DriverDashboard() {
   const yMax = graphData.length ? Math.max(...graphData.map(d => Number(d.total || 0))) : 0;
   const domainMax = niceMax(yMax);
 
-  // avatar: prefer user.avatar (from AuthContext) then profile.avatar then fallback
   const resolvedAvatar = (user?.avatar && String(user.avatar).trim()) ||
                          (profile?.avatar && String(profile.avatar).trim()) ||
                          DEFAULT_AVATAR;
@@ -174,7 +211,7 @@ export default function DriverDashboard() {
       <Header />
 
       <Container maxWidth="lg" sx={{ mt: 3, mb: 4 }}>
-        {/* NOTE: local snackbar removed to avoid duplicate toasts with Header */}
+        {errorMsg && <Alert severity="warning" sx={{ mb: 2 }}>{errorMsg}</Alert>}
 
         <Paper elevation={1} sx={{ bgcolor: '#0C2946', color: '#fff', p: 3, mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: 2 }}>
           <Box>
@@ -250,7 +287,7 @@ export default function DriverDashboard() {
               <MonetizationOn sx={{ color: 'error.main', fontSize: 32 }} />
               <Box>
                 <Typography variant="body1" fontWeight={500}>
-                  {loadingTodaySummary ? <CircularProgress size={20} /> : `${parseFloat(todaySummary.total || 0).toFixed(2)} BS`}
+                  {loadingTodaySummary ? <CircularProgress size={20} /> : formatCurrency(todaySummary.total)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">Recaudado</Typography>
               </Box>
@@ -262,7 +299,7 @@ export default function DriverDashboard() {
               <TrendingUp sx={{ color: 'error.main', fontSize: 32 }} />
               <Box>
                 <Typography variant="body1" fontWeight={500}>
-                  {loadingTodaySummary ? <CircularProgress size={20} /> : `${parseFloat(todaySummary.total || 0).toFixed(2)} BS`}
+                  {loadingTodaySummary ? <CircularProgress size={20} /> : formatCurrency(todaySummary.total)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">Ganancias (Hoy)</Typography>
               </Box>
@@ -285,14 +322,18 @@ export default function DriverDashboard() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredPayments.map(p => (
-                    <TableRow key={p.id || `${p.passenger_name}-${p.created_at || Math.random()}`}>
-                      <TableCell>{p.route_name}</TableCell>
-                      <TableCell>{p.passenger_name}</TableCell>
-                      <TableCell>{parseFloat(p.amount || 0).toFixed(2)} Bs</TableCell>
-                      <TableCell>{p.created_at ? new Date(p.created_at).toLocaleString() : ''}</TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredPayments.map(p => {
+                    // row key: prefer id, otherwise build a stable-ish key avoiding inline template mistakes
+                    const rowKey = p?.id ?? `${(p?.passenger_name || p?.user_name || 'pass')}-${p?.created_at ?? Math.random()}`;
+                    return (
+                      <TableRow key={rowKey}>
+                        <TableCell>{p?.route_name || p?.route?.name || '-'}</TableCell>
+                        <TableCell>{p?.passenger_name || p?.user_name || '-'}</TableCell>
+                        <TableCell>{parseFloat(p?.amount ?? p?.monto ?? 0).toFixed(2)} Bs</TableCell>
+                        <TableCell>{p?.created_at ? new Date(p.created_at).toLocaleString() : ''}</TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>

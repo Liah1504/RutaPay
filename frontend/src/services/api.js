@@ -1,10 +1,4 @@
 // src/services/api.js
-// Instancia axios centralizada: exporta `api` como default y wrappers (userAPI, authAPI, tripAPI, rechargeAPI, routeAPI, driverAPI, notificationsAPI, adminAPI, paymentAPI)
-// ----------------- ACTUALIZADO -----------------
-// - driverAPI.getPaymentsSummary ahora apunta a admin path '/admin/drivers/payments/summary'
-// - Se agregó adminAPI.getDriverBalancesRange que envuelve ese endpoint.
-// - Se agregó notificationsAPI.markAllRead para marcar todas las notificaciones como leídas.
-
 import axios from 'axios';
 
 const API_BASE = (import.meta && import.meta.env && import.meta.env.VITE_API_URL)
@@ -100,29 +94,43 @@ export const routeAPI = {
   update: (id, routeData) => api.put(`/routes/${id}`, routeData)
 };
 
+// ---------- DRIVER API (corrección segura) ----------
 export const driverAPI = {
   getProfile: () => api.get('/drivers/profile'),
   getPayments: () => api.get('/drivers/payments'),
-  // updated: call admin endpoint (requires admin token) or other admin endpoints
-  getPaymentsSummary: (params) => api.get('/admin/drivers/payments/summary', { params }),
+
+  // Usar el endpoint destinado a drivers (no admin)
+  // Antes apuntaba a /admin/drivers/... lo que provocó 401/403 para tokens driver
+  getPaymentsSummary: (params) => api.get('/drivers/payments/summary', { params }),
+
+  // Método adicional: intenta endpoint driver específico; si es 404 intenta admin fallback.
+  // Importante: si el endpoint devuelve 401/403, se propaga (no se silencia).
+  getDriverDashboard: async (params = {}) => {
+    try {
+      return await api.get('/drivers/dashboard', { params });
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        // fallback a admin summary solo si el driver endpoint no existe (compatibilidad)
+        return api.get('/admin/drivers/payments/summary', { params });
+      }
+      throw err;
+    }
+  },
+
   getNotifications: (limit = 5, unread = false) => api.get('/notifications', { params: { limit, unread } }),
   updateProfile: (data) => api.put('/drivers/profile', data)
 };
+// ------------------------------------------------
 
 export const notificationsAPI = {
-  // Get latest notifications for the current user (optionally only unread)
   getLatestForDriver: (limit = 10) => api.get('/notifications', { params: { limit, unread: true } }),
-  // Mark a single notification as read
   markAsRead: (id) => api.put(`/notifications/${id}/read`),
-  // Mark all notifications for the authenticated user as read
   markAllRead: () => api.put('/notifications/read-all'),
-  // Get notifications for the current user (paginated)
   getForUser: (limit = 20) => api.get('/notifications', { params: { limit } }),
-  // Admin listing
   getForAdmin: (limit = 50, type = null) => api.get('/notifications/admin', { params: { limit, type } })
 };
 
-// ------- ADMIN API (incluye ingresos y reportes) -------
+// ------- ADMIN API (se mantiene sin cambios) -------
 export const adminAPI = {
   getStats: () => api.get('/admin/stats'),
   getAllUsers: () => api.get('/admin/users'),
@@ -135,14 +143,8 @@ export const adminAPI = {
     try { return await api.post('/users', payloadWithRole); } catch (err) { if (!err.response || err.response.status !== 404) throw err; }
     return await api.post('/auth/register', payloadWithRole);
   },
-
-  // Obtener ingresos por periodo (day|week|month)
   getRevenue: (period = 'day') => api.get('/admin/revenue', { params: { period } }),
-  // Obtener ingresos por rango start/end (YYYY-MM-DD)
   getRevenueRange: (start, end) => api.get('/admin/revenue', { params: { start, end } }),
-
-  // Nuevo: resumen pagos por conductor (rango o fecha)
-  // llamable desde frontend admin pages (necesita token con rol admin)
   getDriverPaymentsSummary: (params) => api.get('/admin/drivers/payments/summary', { params }),
   getDriverBalancesRange: (start, end, driverId = null) => {
     const params = { start, end };
