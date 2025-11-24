@@ -197,7 +197,6 @@ export default function DriverDashboard() {
       const a = document.createElement('a');
       a.href = url;
       const safeUser = (user?.name || 'conductor').replace(/\s+/g, '_').toLowerCase();
-      // use fixed suffix to avoid undefined variable
       a.download = `pagos_${safeUser}_day.csv`;
       document.body.appendChild(a);
       a.click();
@@ -216,7 +215,12 @@ export default function DriverDashboard() {
   const periodLabel = 'Hoy';
   const hideBottomHistory = location?.pathname === '/driver';
 
-  // Render: no slice labels around chart (legend only)
+  // ----- Add driver_code display (preserve existing UI)
+  // Accept common shapes: profile.driver_code, profile.driver?.code, profile.code, user.driver_code
+  const rawDriverCode = profile?.driver_code ?? profile?.driver?.code ?? profile?.code ?? user?.driver_code ?? null;
+  const displayDriverCode = rawDriverCode != null ? String(rawDriverCode).padStart(3, '0') : null;
+
+  // Render: show driver_code badge and remove "desactivado" state (only show chip when active)
   return (
     <>
       <Header />
@@ -226,11 +230,34 @@ export default function DriverDashboard() {
 
         <Paper elevation={1} sx={{ bgcolor: '#0C2946', color: '#fff', p: 3, mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: 2 }}>
           <Box>
-            <Typography variant="h6" fontWeight={700}>Bienvenido, {profile?.name || user?.name || 'Conductor'}</Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <Typography variant="h6" fontWeight={700}>Bienvenido, {profile?.name || user?.name || 'Conductor'}</Typography>
+
+              {displayDriverCode && (
+                <Chip
+                  label={`#${displayDriverCode}`}
+                  size="small"
+                  sx={{
+                    bgcolor: 'rgba(255,255,255,0.12)',
+                    color: '#fff',
+                    fontWeight: 700,
+                    borderRadius: 1,
+                    height: 28,
+                    px: 1
+                  }}
+                />
+              )}
+            </Box>
+
             <Box sx={{ mt: 1 }}>
               <Typography variant="body2">
                 Estado:&nbsp;
-                <Chip label={profile?.is_available ? 'En ruta' : 'Fuera de servicio'} color={profile?.is_available ? 'success' : 'default'} size="small" />
+                {/* Only show the positive state chip; remove the 'desactivado' text/chip */}
+                {profile?.is_available ? (
+                  <Chip label="En ruta" color="success" size="small" />
+                ) : (
+                  <span style={{ color: '#fff', opacity: 0.8 }}> — </span>
+                )}
               </Typography>
             </Box>
           </Box>
@@ -321,7 +348,7 @@ export default function DriverDashboard() {
                         style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #d0d7da' }}
                       />
                     </Box>
-                    <IconButton size="small" onClick={() => exportCSV(true)} title="Exportar CSV"><FileDownload /></IconButton>
+                    <IconButton size="small" onClick={() => exportCSV()} title="Exportar CSV"><FileDownload /></IconButton>
                   </Box>
                 </Box>
 
@@ -356,7 +383,7 @@ export default function DriverDashboard() {
               <Paper elevation={1} sx={{ p: 2 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="subtitle2" color="text.secondary">Total recaudado</Typography>
-                  <IconButton size="small" onClick={() => exportCSV(true)} title="Exportar historial CSV"><FileDownload /></IconButton>
+                  <IconButton size="small" onClick={() => exportCSV()} title="Exportar historial CSV"><FileDownload /></IconButton>
                 </Box>
 
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
