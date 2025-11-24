@@ -24,7 +24,7 @@ const createRecharge = async (req, res) => {
     const r = await db.query(insertQ, [userId, amount, reference || null]);
     const recharge = r.rows[0];
 
-    // Notificar al usuario (mensaje amigable)
+    // Notificar al usuario 
     try {
       const titleUser = 'Recarga enviada';
       const bodyUser = `Tu recarga de Bs ${parseFloat(amount).toFixed(2)} (ref ${reference || '—'}) fue enviada y está pendiente de aprobación.`;
