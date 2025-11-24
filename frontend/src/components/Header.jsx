@@ -82,7 +82,6 @@ const Header = () => {
     if (location?.state && location.state.successMessage) {
       setSnackMsg(location.state.successMessage);
       setSnackOpen(true);
-      // clear state so it doesn't show again
       navigate(location.pathname, { replace: true, state: {} });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,10 +241,14 @@ const Header = () => {
     return '/';
   };
 
+  // Build menu actions: close drawer then navigate after a short delay to avoid race with drawer close
   const menu = ALL_MENU.filter(m => allowedKeys.includes(m.key)).map(m => ({
     ...m,
     to: getRouteForKey(m.key),
-    action: () => { setOpen(false); navigate(getRouteForKey(m.key)); }
+    action: () => {
+      setOpen(false);
+      setTimeout(() => navigate(getRouteForKey(m.key)), 80);
+    }
   }));
 
   return (
@@ -317,7 +320,7 @@ const Header = () => {
       {/* Avatar menu */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={closeProfileMenu} transformOrigin={{ horizontal: 'right', vertical: 'top' }} anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}>
         {allowedKeys.includes('settings') && (
-          <MenuItem onClick={() => { closeProfileMenu(); navigate(getRouteForKey('settings')); }}>
+          <MenuItem onClick={() => { closeProfileMenu(); setTimeout(() => navigate(getRouteForKey('settings')), 80); }}>
             <ListItemIcon><SettingsIcon fontSize="small" /></ListItemIcon>
             <ListItemText>Ajustes</ListItemText>
           </MenuItem>

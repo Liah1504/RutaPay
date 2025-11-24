@@ -1,4 +1,3 @@
-// src/services/api.js
 import axios from 'axios';
 
 /**
@@ -233,6 +232,8 @@ export const notificationsAPI = {
 export const adminAPI = {
   getStats: () => api.get('/admin/stats'),
   getAllUsers: () => api.get('/admin/users'),
+  // NEW: try to fetch drivers directly if backend exposes it
+  getDrivers: () => api.get('/admin/drivers'),
   updateUser: (id, userData) => api.put(`/admin/users/${id}`, userData),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   createDriver: (driverData) => api.post('/admin/drivers', driverData),

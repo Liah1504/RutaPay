@@ -11,13 +11,22 @@ import { adminAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
- * UsersPage
- * - Muestra la lista de usuarios con acciones Editar / Eliminar.
- * - Los botones están envueltos en IconButton con onClick activos.
- * - Abre un modal con UserForm para crear/editar usuarios.
- * - Evita que el usuario autenticado pueda eliminarse a sí mismo.
+ * UsersPage (sin textos "Editar"/"Eliminar", solo iconos)
+ * - Normaliza payloads (res.data | res.data.data | res.data.items)
+ * - Botones Editar/Eliminar con onClick y stopPropagation
+ * - Evita que el usuario se elimine a sí mismo (botón disabled)
  */
-const UsersPage = () => {
+
+const getArrayFromResponse = (res) => {
+  const payload = res?.data ?? res;
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.users)) return payload.users;
+  return [];
+};
+
+export default function UsersPage() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -32,11 +41,13 @@ const UsersPage = () => {
     setFetchError('');
     try {
       const res = await adminAPI.getAllUsers();
-      const list = Array.isArray(res?.data) ? res.data : (res?.data?.items ?? []);
-      setUsers(list);
+      const list = getArrayFromResponse(res);
+      console.debug('UsersPage: getAllUsers response', res?.data ?? res);
+      setUsers(list || []);
     } catch (err) {
       console.error('UsersPage fetchAll', err);
       setFetchError(err?.response?.data?.error || err?.message || 'Error cargando usuarios');
+      setUsers([]);
     } finally {
       setLoading(false);
     }
@@ -46,20 +57,9 @@ const UsersPage = () => {
     fetchAll();
   }, [fetchAll]);
 
-  const openCreate = () => {
-    setEditingUser(undefined);
-    setOpenDialog(true);
-  };
-
-  const openEdit = (u) => {
-    setEditingUser(u);
-    setOpenDialog(true);
-  };
-
-  const closeDialog = () => {
-    setEditingUser(undefined);
-    setOpenDialog(false);
-  };
+  const openCreate = () => { setEditingUser(undefined); setOpenDialog(true); };
+  const openEdit = (u) => { setEditingUser(u); setOpenDialog(true); };
+  const closeDialog = () => { setEditingUser(undefined); setOpenDialog(false); };
 
   const handleDelete = async (id, name) => {
     if (!id) return;
@@ -93,7 +93,6 @@ const UsersPage = () => {
       console.error('Error saving user:', err);
       const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Error guardando usuario';
       setSnack({ open: true, severity: 'error', message: msg });
-      // rethrow if the form expects thrown errors
       throw err;
     } finally {
       setSubmitting(false);
@@ -157,16 +156,18 @@ const UsersPage = () => {
                           </IconButton>
                         </Tooltip>
 
-                        <Tooltip title="Eliminar Usuario">
-                          <IconButton
-                            size="small"
-                            aria-label={`Eliminar ${u.name}`}
-                            onClick={(e) => { e.stopPropagation(); handleDelete(u.id, u.name); }}
-                            color="error"
-                            disabled={currentUser && u.id === currentUser.id}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
+                        <Tooltip title={currentUser && u.id === currentUser.id ? "No puedes eliminar tu propio usuario" : "Eliminar Usuario"}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              aria-label={`Eliminar ${u.name}`}
+                              onClick={(e) => { e.stopPropagation(); handleDelete(u.id, u.name); }}
+                              color="error"
+                              disabled={currentUser && u.id === currentUser.id}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </span>
                         </Tooltip>
                       </TableCell>
                     </TableRow>
@@ -205,6 +206,4 @@ const UsersPage = () => {
       </Snackbar>
     </div>
   );
-};
-
-export default UsersPage;
+}

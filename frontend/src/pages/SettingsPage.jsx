@@ -7,14 +7,10 @@ import { userAPI, driverAPI } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 /**
- * SettingsPage (actualizado)
- * - Carga perfil desde userAPI.getProfile()
- * - Inicializa form.vehicle <- profile.vehicle_type || profile.vehicle
- * - Inicializa form.plate <- profile.vehicle_plate || profile.plate
- * - Al enviar construye payload que incluye aliases (vehicle + vehicle_type + unit, plate + vehicle_plate + placa, license_number + license)
- * - Si existe endpoint driverAPI.updateProfile, lo llama como fallback (intenta actualizar drivers directamente)
+ * SettingsPage
+ * - Permite cambiar avatar y campos del perfil.
+ * - Envía multipart/form-data si hay imagen.
  */
-
 export default function SettingsPage() {
   const { user, setUser } = useAuth();
   const navigate = useNavigate();
@@ -35,18 +31,16 @@ export default function SettingsPage() {
     license_number: ''
   });
 
-  // Load profile on mount and when user changes
+  // Load profile
   useEffect(() => {
     let mounted = true;
     const load = async () => {
       setLoadingProfile(true);
       try {
         const res = await userAPI.getProfile();
-        // userAPI.getProfile() usually returns res.data or res.data.data depending on API; normalize:
         const profile = res?.data?.data ?? res?.data ?? res;
         if (!mounted) return;
 
-        // Map profile fields to the form. Backend returns vehicle_type/vehicle_plate from drivers table.
         setForm({
           email: profile?.email ?? '',
           phone: profile?.phone ?? profile?.telefono ?? '',
@@ -55,9 +49,8 @@ export default function SettingsPage() {
           license_number: profile?.license_number ?? profile?.license ?? profile?.driver?.license_number ?? ''
         });
 
-        setAvatarPreview(profile?.avatar || null);
-        // Update auth context user if needed
-        setUser && setUser(profile);
+        setAvatarPreview(profile?.avatar || profile?.avatar_url || null);
+        if (setUser) setUser(profile);
       } catch (err) {
         console.error('Error cargando perfil en SettingsPage', err);
         setMsg({ type: 'error', text: 'Error cargando perfil' });
@@ -71,7 +64,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     return () => {
-      // revoke preview if blob
       if (avatarPreview && typeof avatarPreview === 'string' && avatarPreview.startsWith('blob:')) {
         try { URL.revokeObjectURL(avatarPreview); } catch (e) { /* ignore */ }
       }
@@ -83,6 +75,10 @@ export default function SettingsPage() {
   const handleFileInput = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    if (f.size > 4 * 1024 * 1024) {
+      setMsg({ type: 'error', text: 'El archivo excede el tamaño máximo permitido (4 MB).' });
+      return;
+    }
     if (avatarPreview && typeof avatarPreview === 'string' && avatarPreview.startsWith('blob:')) {
       try { URL.revokeObjectURL(avatarPreview); } catch (err) { /* ignore */ }
     }
@@ -96,23 +92,20 @@ export default function SettingsPage() {
     const role = (user?.role || 'passenger').toString().toLowerCase();
     if (role === 'driver') return '/driver';
     if (role === 'admin') return '/admin';
-    return '/passenger';
+    return '/';
   };
 
   const handleCancel = () => navigate(getHomeForRole());
 
-  // Build payload including aliases to ensure backend receives some name it expects
   const buildPayloadWithAliases = () => {
     const p = {
       email: form.email,
       phone: form.phone,
-      // primary keys
       vehicle: form.vehicle,
       plate: form.plate,
       license_number: form.license_number
     };
 
-    // duplicates / aliases
     if (form.vehicle) {
       p.vehicle_type = form.vehicle;
       p.unit = form.vehicle;
@@ -125,7 +118,6 @@ export default function SettingsPage() {
       p.license = form.license_number;
     }
 
-    // remove undefined or empty string keys (backend may treat empty string as value)
     Object.keys(p).forEach(k => {
       if (p[k] === undefined || p[k] === null) delete p[k];
       if (typeof p[k] === 'string' && p[k].trim() === '') delete p[k];
@@ -140,33 +132,25 @@ export default function SettingsPage() {
     setSaving(true);
 
     try {
-      // If there is an avatar file, use FormData so upload works
       if (avatarFile) {
         const fd = new FormData();
         fd.append('avatar', avatarFile);
-        // append all payload keys (including aliases)
         const payload = buildPayloadWithAliases();
         Object.keys(payload).forEach(k => fd.append(k, payload[k]));
-        // send multipart
         await userAPI.updateProfileForm(fd);
       } else {
-        // send JSON
         const payload = buildPayloadWithAliases();
         await userAPI.updateProfile(payload);
       }
 
-      // Fallback: also attempt drivers endpoint if available, to ensure drivers table is updated (some backends expect driver-scoped endpoint)
+      // optional driver fallback (non-fatal)
       try {
-        // only send driver keys to driver endpoint
         const driverPayload = {};
         if (form.vehicle) driverPayload.vehicle_type = form.vehicle;
         if (form.plate) driverPayload.vehicle_plate = form.plate;
         if (form.license_number) driverPayload.license_number = form.license_number;
-
-        // call driverAPI.updateProfile (if exists) but don't fail the whole flow if it errors
         if (Object.keys(driverPayload).length > 0) {
           await driverAPI.updateProfile(driverPayload).catch(err => {
-            // log but don't block
             console.warn('driverAPI.updateProfile fallback failed (non-fatal)', err?.response?.data || err?.message || err);
           });
         }
@@ -174,11 +158,10 @@ export default function SettingsPage() {
         console.warn('driver fallback error', e);
       }
 
-      // reload profile from server to refresh app state
       const refreshed = await userAPI.getProfile();
       const profileData = refreshed?.data?.data ?? refreshed?.data ?? refreshed;
-      setUser && setUser(profileData);
-      // update form fields from returned profile (normalize keys)
+      if (setUser) setUser(profileData);
+
       setForm({
         email: profileData?.email ?? '',
         phone: profileData?.phone ?? '',
@@ -186,11 +169,9 @@ export default function SettingsPage() {
         plate: profileData?.vehicle_plate ?? profileData?.plate ?? '',
         license_number: profileData?.license_number ?? profileData?.license ?? ''
       });
-      setAvatarPreview(profileData?.avatar || null);
+      setAvatarPreview(profileData?.avatar || profileData?.avatar_url || null);
 
       setMsg({ type: 'success', text: 'Perfil actualizado correctamente.' });
-
-      // navigate back after a short delay so user sees message
       setTimeout(() => navigate(getHomeForRole(), { state: { successMessage: 'Guardado correctamente' } }), 800);
     } catch (err) {
       console.error('Error guardando perfil desde SettingsPage:', err);
@@ -250,11 +231,11 @@ export default function SettingsPage() {
               <Button variant="contained" onClick={handleClickChangePhoto} disabled={saving}>
                 {saving ? 'Procesando...' : 'Cambiar foto'}
               </Button>
-              <Button variant="outlined" onClick={() => { setAvatarFile(null); setAvatarPreview(user?.avatar || null); }} disabled={saving}>Eliminar</Button>
+              <Button variant="outlined" onClick={() => { setAvatarFile(null); setAvatarPreview(user?.avatar || user?.avatar_url || null); }} disabled={saving}>Eliminar</Button>
             </Stack>
 
             <Typography variant="caption" display="block" sx={{ mt: 1, color: 'text.secondary' }}>
-              JPG/PNG, máximo recomendado 2MB.
+              JPG/PNG, máximo recomendado 4MB.
             </Typography>
           </Box>
         </Box>
